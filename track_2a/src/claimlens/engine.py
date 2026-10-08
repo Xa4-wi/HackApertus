@@ -133,6 +133,11 @@ def check_claim(proposal, claim, model, mode, settings, *, claim_language="auto"
     result["warnings"].append("Exact quotes were checked against the source passages. Quote provenance does not independently verify the model's interpretation.")
     if processing.get("strategy") == "retrieval":
         result["warnings"].append(processing["coverage"])
+        expanded = response.get("evidence_context_expanded", 0)
+        if type(expanded) is int and expanded > 0:
+            processing["evidence_context_expanded"] = expanded
+            result["warnings"].append(
+                "{} evidence quotation(s) include surrounding original-source text for context; the model's exact quoted words are retained.".format(expanded))
     if metrics["context_tokens"] is None:
         result["warnings"].append("The endpoint does not report source-context token usage separately; context_tokens is null and context_characters is measured locally.")
     if proposal.get("is_fixture"):

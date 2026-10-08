@@ -14,9 +14,11 @@ Both files are UTF-8 JSONL: each nonempty line is one complete JSON object. Prod
 
 The guide does not prescribe parallel processing or a concurrency limit. Sequential processing is a valid initial design. It does not define optional extra request fields or a recoverable error object. Keep official output fields stable; diagnose failures on stderr rather than filling in a fabricated prediction.
 
-ClaimLens continues with later cases after a case fails and writes successful predictions to `OUTPUT.partial.jsonl` after each success. It replaces the requested output only when every case succeeds; a failed batch exits nonzero and leaves any previous complete output untouched. The partial file is a recovery artifact, not a complete submission. A verdict rejected by claim/citation validation gets one recovery attempt when all billed usage is known. The case's inference deadline and call budget cover both attempts. Transport retries are bounded; unknown token usage remains unknown and prevents an official record instead of being replaced with an estimate.
+ClaimLens continues with later cases after a case fails and writes successful predictions to `OUTPUT.partial.jsonl` after each success. It replaces the requested output only when every case succeeds; a failed batch exits nonzero and leaves any previous complete output untouched. The partial file is a recovery artifact, not a complete submission. Reference/exhaustive cases can retry a verdict rejected by claim/citation validation once when all billed usage is known, within the shared deadline/call budget. Default retrieval booklets receive one pipeline attempt, with at most four total transport attempts including retries; a rejected verdict does not restart the pipeline. Transport retries are bounded; unknown token usage remains unknown and prevents an official record instead of being replaced with an estimate.
 
-For long documents, the complete source is examined before evidence selection. If selected excerpts are too large, the model ranks their original units in at most eight reduction rounds, examining every candidate in each round. Original IDs, verbatim text and physical pages are preserved. Reduction may omit relevant evidence and is disclosed in processing metadata. Time/token totals include these passes and retries. Exhausted or fixed context/call-capacity constraints fail explicitly without repeating the whole analysis.
+V0.5 defaults to `DOCUMENT_STRATEGY=retrieval` for booklets. Short sources that fit the 5,000-token planned input budget use one complete-source call. Longer sources use one Apertus expansion of the claim/proposal into German, French and Italian search phrases (at most 384 output tokens), cached local BM25 passage ranking, and one final assessment. Original text and physical pages are preserved. Only selected passages reach the final model; omitted evidence can change the verdict, and coverage is disclosed in processing metadata. The default total budget is 120 seconds; failures never become fake neutral predictions or trigger an automatic exhaustive fallback.
+
+The lexical index is built on first search in the operating system's temporary directory, keyed by extracted text, provenance metadata and algorithm version. It contains no gold labels or predictions. `DOCUMENT_STRATEGY=exhaustive` explicitly restores examination of every source segment with at most eight evidence-reduction rounds when needed. **Task B always keeps full-reference/exhaustive processing** and uses only its supplied text. Usage/time totals include every model pass and retry in either mode.
 
 ## Request
 
@@ -80,7 +82,9 @@ Prefer the section treating the proposal in detail. A repeated fact on a summary
 
 For task B, evidence is optional and is not scored. Use `[]`, or return quotes with `"page": null`. Do not invent a PDF page for a reference-only request.
 
-Some ordinary JSON-object endpoints return a quote string instead of a citation object. ClaimLens binds such a string only when it is a verbatim substring of exactly one supplied passage, then applies independent citation validation. Ambiguous matches, paraphrases and an explicitly incorrect passage ID remain invalid. The official exported evidence format is unchanged.
+Retrieved-mode local decoding uses contextual, verbatim quotations of about 900 characters, merging a tiny trailing fragment into preceding context up to 1,200 characters. This avoids offering only isolated lines when the selected source contains fuller context. It still cannot prove that the selected quotation supports the label.
+
+Some ordinary JSON-object endpoints return a quote string instead of a citation object. ClaimLens binds such a string only when it is a verbatim substring of exactly one supplied passage. In retrieved mode, a unique exact anchor in its cited passage may be expanded to the containing original-source context, preserving the anchor and label. Expansion never crosses an omission marker; processing metadata and warnings disclose it. Ambiguous anchors are not expanded, and ambiguous passage matches, paraphrases or an explicitly incorrect passage ID are not repaired. Independent citation validation still applies. Task B/exhaustive behavior and the official exported evidence format remain unchanged.
 
 ## Model endpoint and environment
 
@@ -140,10 +144,13 @@ The following are ClaimLens resource bounds, **not documented organizer input li
 | OCR | At most 20 scant-text pages, 180 seconds total, and 30 seconds per external command. |
 | Model context | `CONTEXT_TOKENS`, default 8,192, configurable from 4,096 to 262,144 and required to match the serving runtime. |
 | HTTP request timeout | `LLM_TIMEOUT_SECONDS`, default 120 seconds, configurable from 1 to 600. |
+| Booklet strategy | `DOCUMENT_STRATEGY=retrieval` by default; `exhaustive` is an explicit alternative. Task B always uses full-reference/exhaustive processing. |
+| Retrieval input budget | `RETRIEVAL_PROMPT_TOKENS`, default 5,000, configurable from 1,500 to 12,000; limited further by context minus output reserve. |
+| Retrieval case deadline | `RETRIEVAL_TIMEOUT_SECONDS`, default 120 seconds, configurable from 1 to 300; includes CLI source preparation and cannot exceed the remaining document budget. |
 | Case inference/recovery budget | `DOCUMENT_TIMEOUT_SECONDS`, default 1,800 seconds, configurable up to 3,600. |
-| Model-call budget per case | `MAX_DOCUMENT_MODEL_CALLS`, default 48, configurable from 2 to 128. |
+| Model-call budget per case | `MAX_DOCUMENT_MODEL_CALLS`, default 48, configurable from 2 to 128; retrieval caps the total at four transport attempts. |
 
-The inference deadline is checked around model processing and recovery; it is not a separate process watchdog for PDF parsing. OCR retains its own bounded subprocess deadlines. Confirm the organizer's overall execution limit and actual case sizes before a final submission. These settings do not establish that the implementation will fit an undocumented evaluation time limit.
+Source preparation checks the case deadline before and between PDF pages; OCR subprocess deadlines are bounded by the remaining time. Model processing and recovery share the remaining budget. These checks are not a separate process watchdog: an in-process PDF parser cannot be preempted during one page operation. Confirm the organizer's overall execution limit and actual case sizes before a final submission. These settings do not establish that the implementation will fit an undocumented evaluation time limit.
 
 ## Container and data preparation
 

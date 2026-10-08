@@ -179,7 +179,7 @@ def build(source_path, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=ROOT / "technical_report.md")
-    parser.add_argument("--output", type=Path, default=ROOT / "output/pdf/claimlens-v4-report.pdf")
+    parser.add_argument("--output", type=Path, default=ROOT / "output/pdf/claimlens-v5-report.pdf")
     args = parser.parse_args()
     build(args.source.resolve(), args.output.resolve())
 

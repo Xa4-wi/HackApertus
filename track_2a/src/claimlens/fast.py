@@ -27,6 +27,16 @@ preserving names, numbers and negations. Use at most 12 words per phrase, not a
 full explanation. Keep claim and vote phrases separate. If vote is empty, all
 vote_queries values must be empty strings. Return only JSON, no Markdown.
 """
+GENERIC_QUERY_SHAPE = """
+Both claim_queries AND vote_queries must always contain exactly the three keys
+"de", "fr", "it", even when the supplied claim or vote is already in one language.
+Translate a nonempty vote into ALL THREE languages; do not return only its
+original language. Keep these keys unchanged and replace the phrase placeholders
+below with short translations. If vote is empty, replace all three vote phrase
+placeholders with "". Do not use arrays, extra keys or language names as keys.
+Required JSON structure:
+{"claim_queries":{"de":"German claim phrase","fr":"French claim phrase","it":"Italian claim phrase"},"vote_queries":{"de":"German vote phrase","fr":"French vote phrase","it":"Italian vote phrase"}}
+"""
 
 
 def search(passages, queries, vote_queries, limit=12):
@@ -35,8 +45,9 @@ def search(passages, queries, vote_queries, limit=12):
     return search_index(passages, queries, vote_queries, limit=limit)
 
 
-def query_messages(claim, claim_language, vote):
-    return [{"role": "system", "content": QUERY_PROMPT},
+def query_messages(claim, claim_language, vote, *, generic_json=False):
+    prompt = QUERY_PROMPT + (GENERIC_QUERY_SHAPE if generic_json else "")
+    return [{"role": "system", "content": prompt},
             {"role": "user", "content": json.dumps({
                 "claim": claim, "claim_language": claim_language, "vote": vote,
             }, ensure_ascii=False, separators=(",", ":"))}]
@@ -59,7 +70,8 @@ def request_queries(claim, model, settings, claim_language, vote):
     return request_json({
         "model": settings.model_for_request(model), "temperature": 0,
         "max_tokens": QUERY_OUTPUT_TOKENS, "response_format": response_format,
-        "messages": query_messages(claim, claim_language, vote),
+        "messages": query_messages(claim, claim_language, vote,
+                                   generic_json=not settings.local_model_configured),
     }, settings, [])
 
 
@@ -151,7 +163,8 @@ def analyze_retrieval(claim, passages, model, settings, claim_language, vote,
                          "index_cache_hit": False, "retrieval_candidates": len(passages)})
         return response, aggregate_metrics(observations, passages, started), metadata
 
-    if not budget.fits(query_messages(claim, claim_language, vote), QUERY_OUTPUT_TOKENS):
+    if not budget.fits(query_messages(claim, claim_language, vote,
+                                    generic_json=not settings.local_model_configured), QUERY_OUTPUT_TOKENS):
         raise capacity_error("The claim and proposal cannot fit the multilingual query expansion context.")
     expanded, usage = request_queries(claim, model, call_settings(reserve=1), claim_language, vote)
     observations.append(usage)

@@ -9,9 +9,103 @@ Software compatibility, prediction quality, and quote provenance are checked
 separately. Passing local checks does not establish a result on the organizers'
 private benchmark or verify their inference endpoint.
 
-## Frozen public-data cohorts
+## V0.5 development latency check
 
-The current preparation is in `output/v4-readiness/`, generated from
+The default booklet pipeline now uses cached local BM25 passage search rather
+than sending every page through model extraction. A short Apertus call expands
+the claim/proposal into German, French and Italian search phrases (384 output
+tokens maximum), then one final call assesses selected original passages within
+a default 5,000-token planned input budget. Short inputs that fit use one full
+source call. Task B always keeps full-reference/exhaustive processing.
+
+The V0.5 latency experiment is restricted to **three development booklet cases**.
+The script originally selected DE→FR entailment, FR→IT neutral and IT→DE
+contradiction from previously exercised ballot dates, excluding exact requests
+used before this experiment. It froze inputs and separate gold before inference
+and did not read final Task A/B gold. These same cases were then repeatedly used
+to diagnose citations and tune the response format. This is not a fresh quality
+estimate or evidence of evaluation readiness.
+
+The selected contextual-quotation version is recorded in
+`output/v5-latency-context/`: **3/3 correct, accepted labels with no failures**,
+**54.97 s mean**, **70.63 s p95**, and **12,819 input / 1,632 output tokens** total.
+Every case used two model calls and complete provider usage. All three reused
+lexical indexes while extracting their 32-, 72- and 40-page PDFs again.
+
+Official gold-passage overlap remained **0.50 (1/2 non-neutral cases)**. A separate
+audit verified all **three returned quotations** on their physical PDF pages,
+with no output issues. Exact quotations can still differ from the benchmark's
+intended evidence. See the selected [score](../output/v5-latency-context/summary.json)
+and [audit](../output/v5-latency-context/evidence-audit.json). The full nine-case
+Task A and 54-case Task B cohorts have not been rerun on this version.
+
+Run from `track_2a/`, using a fresh output directory:
+
+```sh
+.venv/bin/python scripts/evaluate_fast.py prepare --directory output/my-v5-latency
+.venv/bin/python scripts/evaluate_fast.py run --directory output/my-v5-latency
+.venv/bin/python scripts/evaluate_fast.py score --directory output/my-v5-latency
+.venv/bin/python scripts/audit_evidence.py \
+  --input output/my-v5-latency/input/cases.jsonl \
+  --predictions output/my-v5-latency/predictions.jsonl \
+  --output output/my-v5-latency/evidence-audit.json
+```
+
+Without `--directory`, the script uses `output/v5-latency`. Preparation refuses
+to overwrite a nonempty directory. The runner reads no gold, calls the production
+CLI function, records failures and shares a maximum 120-second budget across
+PDF preparation, planning, query expansion, local search, final inference and
+transport retries. There are at most four transport attempts; a failed verdict
+does not restart the pipeline or launch an exhaustive fallback. Unknown usage
+remains unknown rather than becoming zero or an invented successful record.
+
+Source preparation checks the deadline between PDF pages and limits OCR
+subprocesses to the remaining budget. The in-process PDF parser cannot be
+preempted during one page operation. A deadline is a bounded-processing policy,
+not a claim that every possible blocking parser operation is interruptible.
+
+Record selected source pages/units, query expansion, index-cache hits, observed
+tokens, exact quotations and latency alongside labels. The local index is built
+on first search and cached under the temporary directory in
+`claimlens-retrieval-v1`, keyed by extracted text, provenance metadata and the
+index version. It caches lexical statistics, never answers or gold. Browser
+imports already cache PDF bytes and text separately. Cold import/extraction,
+first index creation and warm-index queries are distinct costs; do not label a
+measurement warm without inspecting its cache record.
+
+The final model sees selected passages, so relevant qualifications,
+counter-evidence or facts spread across the document can be missed. Original
+quotes and physical pages remain verifiable. Neither a lexical score nor a
+missing search hit proves neutrality. An empty or malformed retrieval result
+fails explicitly. The UI exposes this coverage limitation.
+
+### Development history
+
+The initial run in `output/v5-latency/` returned three correct labels in 39.15 s
+mean (40.80 s p95), using two calls per case and newly built indexes. Its exact
+quotations were inadequate: an attribution-only footer and a broken hyphenated
+line, even though substantive supporting text was present among retrieved units.
+The exact-page audit did not detect that semantic weakness. Those results remain
+preserved and must not be presented as the selected version's measurements.
+
+The chosen repair keeps verbatim contextual quotation candidates of about 900
+characters, merging a tiny trailing fragment with preceding context up to 1,200
+characters. The model returns the full quotation text. With ordinary JSON-only
+providers, Python may expand an unambiguous exact anchor within the cited
+passage to the containing original context. The label and original quoted words
+stay unchanged; the expansion count is disclosed, and no quote crosses omitted
+text. Task B/exhaustive quotation behavior is unchanged.
+
+The selected contextual run is `output/v5-latency-context/`. A later experiment
+that replaced quotation text generation with citation IDs regressed to two
+correct labels out of three and was discarded. Its artifacts are preserved under
+`output/v5-fast-final/`; despite that directory name, it is not the selected
+implementation. These repeated cases were used for development decisions, so
+none of the reruns is an independent holdout result.
+
+## Historical V0.4 public-data cohorts
+
+The preserved preparation is in `output/v4-readiness/`, generated from
 `OSTswiss/MNLIoverSwissVotingBooklets` revision
 `fc2b27600310778da6bbf445651ddbca22d86269` with seed
 `claimlens-v4-readiness-20261008`.
@@ -44,21 +138,29 @@ JSONL, original PDFs, the cached Arrow dataset, and the official evaluator have
 content hashes. Gold labels and reference passages live under `gold/`; only the
 `input/` directory belongs in an inference container mount.
 
-## Run and score
+## Prepare broader validation
+
+The commands below describe the larger readiness harness. Use a fresh directory
+for changed code; the completed V0.4 artifacts cannot resume as V0.5.
 
 Run these commands from `track_2a/`. Configure the local model as described in
 [local-model.md](local-model.md), and use the project virtual environment:
 
 ```sh
 .venv/bin/python -m pip install -r requirements-evaluation.txt
-.venv/bin/python scripts/evaluate_readiness.py run --directory output/v4-readiness/final-b
-.venv/bin/python scripts/evaluate_readiness.py score --directory output/v4-readiness/final-b
+.venv/bin/python scripts/evaluate_readiness.py prepare \
+  --directory output/another-readiness-run \
+  --evaluator /path/to/hackapertus-starter/evaluate.py
+.venv/bin/python scripts/evaluate_readiness.py run --directory output/another-readiness-run/final-b
+.venv/bin/python scripts/evaluate_readiness.py score --directory output/another-readiness-run/final-b
 ```
 
-Use `final-a` for the full-booklet run. Its predetermined PDFs contain 16–56 pages;
-these cases can take several minutes each. Run the model serially on a small local
-machine. `final-b-extension` is optional additional evidence; report its result
-alongside the original cohort, including any failures.
+Use `final-a` for a full-booklet quality run only after reviewing the small latency
+experiment. Its predetermined PDFs contain 16–56 pages. Set the booklet strategy
+explicitly when comparing retrieval and exhaustive runs; keep their artifacts
+separate. Run the model serially on a small local machine. `final-b-extension` is
+optional additional evidence; report its result alongside the original cohort,
+including any failures.
 
 Freeze the inference implementation before running a final cohort. If code,
 endpoint, model, limits, or inputs change, use a new run and retain the previous
@@ -83,13 +185,14 @@ report macro-F1, accuracy, class scores, source-to-claim language pairs, Task A
 evidence overlap, missing responses, token completeness, and mean/p95 case time.
 The p95 uses the nearest-rank method. Unknown token usage is not counted as zero.
 
-Long inputs first examine every original source segment. If selected excerpts
-exceed the final context, Apertus ranks the original candidate units in bounded
-windows for at most eight reduction rounds. Every candidate is examined in each
-round; IDs, physical pages and verbatim text remain attached. Selecting fewer
-units can omit relevant evidence. Results record reduction rounds/windows and
-candidate counts, and usage/latency include extraction, reduction, final calls
-and retries. Fixed capacity failures do not cause another full analysis.
+`DOCUMENT_STRATEGY=exhaustive` retains the V0.4 long-document method: every
+original source segment is examined, and oversized selected excerpts are reduced
+in at most eight ranking rounds. Every candidate is examined in each round;
+IDs, physical pages and verbatim text remain attached. Selecting fewer units can
+still omit relevant evidence. These runs record reduction rounds/windows and
+candidate counts. Default `retrieval` runs record selected coverage and cache
+use instead. Both strategies aggregate actual usage and latency across all model
+passes and retries, and fixed capacity failures do not restart full analysis.
 
 The official macro-F1 thresholds are **0.70 for Task B** and **0.60 for Task A**.
 Missing predictions count as wrong. The official script reports invalid usage
@@ -152,17 +255,17 @@ From `track_2a/`:
 ```sh
 .venv/bin/python -m pip install -r requirements-report.txt
 make report
-pdftoppm -png -r 110 output/pdf/claimlens-v4-report.pdf output/pdf/claimlens-v4-page
+pdftoppm -png -r 110 output/pdf/claimlens-v5-report.pdf output/pdf/claimlens-v5-page
 ```
 
 `make report` invokes `scripts/build_submission_report.py`, renders the current
-Markdown report and writes `output/pdf/claimlens-v4-report.pdf` plus its build
+Markdown report and writes `output/pdf/claimlens-v5-report.pdf` plus its build
 manifest. The manifest records source, builder and PDF hashes. The builder
 rejects more than six pages; inspect every rendered page after the last content
 change before delivering the report. A successful build is not a visual review
-or a completed submission. The existing PDF is an earlier draft. It has not been
-regenerated after the user's intentional evaluation stop; final measurements,
-image checks and PDF regeneration remain pending.
+or a completed submission. Earlier V0.4/V2 PDFs remain historical artifacts;
+regenerate the V0.5 report from the selected run and inspect its rendered pages
+before submission.
 
 `make report-v2` explicitly invokes the older `scripts/build_report.py` and
 recreates `output/pdf/claimlens-v2-report.pdf` from its historical measurement
@@ -170,14 +273,14 @@ artifacts. Keep it separate from the current report. Neither report command runs
 inference or modifies evaluation results. Both commands also work from the
 repository root through its forwarding Makefile.
 
-## Recorded results and limits
+## Historical results and limits
 
 The prior, tuned 27-case development sample scored **0.5556 macro-F1** and
 **18/27 correct** using the unmodified official evaluator. All nine neutral cases
 were misclassified as contradiction. Its reproduction is preserved in
 `output/v4-readiness/baseline-v2/official-score.json`; it is not a holdout result.
 
-The two predetermined Task B cohorts are complete: **50/54 correct**, **macro-F1
+The two V0.4 Task B cohorts are complete: **50/54 correct**, **macro-F1
 0.9247219356**, **54 accepted predictions, zero failed/missing cases**. The combined
 [official score](../output/v4-readiness/final-b-combined/summary.json) recomputes
 F1 over all 54 original predictions instead of averaging cohort F1 scores. All
@@ -188,7 +291,7 @@ Independent [primary](../output/v4-readiness/final-b/evidence-audit.json) and
 verified all **34 returned exact reference quotations**, with no output issues.
 Exact quote provenance does not establish semantic correctness.
 
-The Task A rerun was intentionally stopped at the user's request to redesign
+The V0.4 exhaustive Task A rerun was intentionally stopped at the user's request to redesign
 latency after **one of nine cases produced an accepted output**. That case took
 **458,532.384 ms (458.53 seconds)**, with **62,050 input / 661 output tokens**,
 **six model calls** and **one evidence-reduction round**. It has not been scored
@@ -201,13 +304,16 @@ The earlier unsuccessful attempt and source remain under
 reduction and prevents repeated full analysis of fixed capacity constraints.
 Task B retains its pre-repair run identity and source snapshot; its short-source
 inference branch is unchanged. Do not combine these records as though all
-measurements used one source hash. The completed **181 software tests**, frontend
-checks and **54-case Task B results** remain valid recorded observations.
+measurements used one source hash. The historical software/frontend checks and
+54-case Task B results remain recorded observations, not current-version reruns.
+The selected V0.5 source passed **233 Python tests locally and 233 inside the
+`linux/amd64` submission image**, with no network, a read-only filesystem and
+writable temporary storage. The frontend smoke check also passed. Model calls
+in software tests are stubbed; the repeated three-case live measurements are
+recorded above.
 
-Testing and evaluation are stopped. The local model and UI are stopped, ports
-8081 and 8000 have no listener, and the Colima VM is stopped. The final image
-rebuild and PDF regeneration remain pending while latency improvements are
-considered. No result on the organizers' endpoint or private benchmark has been
+Reviewed PDF regeneration and an authenticated organizer-endpoint test remain
+separate checks. No result on the organizers' endpoint or private benchmark has been
 recorded.
 
 These are small samples from a public training dataset. Date separation reduces
@@ -216,56 +322,50 @@ cases retain the dataset's reference-based labels, matching the official case
 construction; a full document can contain additional context. PDFs and dataset
 caches are local artifacts and are not bundled into the submission image.
 
-## Latency diagnosis and proposed next iteration
+## Measured motivation for the retrieval path
 
-The user stopped the full-booklet run to prioritize response time. No faster
-inference path has been implemented or measured yet. The completed case took
-458.53 seconds and six model calls. Native server timings attribute 380.37
-seconds (83%) to reading prompts, 44.09 seconds to generation and 34.07 seconds
-to other case overhead. The final classification call alone took 30.75 seconds;
-the preceding three extraction and two reduction calls took 393.71 seconds of
-model time. See the preserved [timing profile](../output/v4-readiness/latency-analysis/profile.json).
+The user stopped the V0.4 full-booklet run to prioritize response time. Its one
+completed case took 458.53 seconds and six model calls. Native server timings
+attribute 380.37 seconds (83%) to prompt processing, 44.09 seconds to generation
+and 34.07 seconds to other case overhead. The final classification call alone
+took 30.75 seconds; the preceding three extraction and two reduction calls took
+393.71 seconds of model time. See the preserved
+[timing profile](../output/v4-readiness/latency-analysis/profile.json).
 
-The proposed first experiment is a cached local passage index followed by a
-small, live Apertus assessment:
+V0.5 implements local retrieval to reduce text repeatedly sent through Apertus.
+The selected contextual-quotation version averaged **54.97 seconds** on the
+three repeated development cases, with cached lexical indexes. These are
+different cases from the 458.53-second V0.4 observation; those figures do not
+establish a paired speedup or isolate caching. The earlier 30–60-second target
+was not a guarantee, and the slowest selected-version case took 70.63 seconds.
+Review the evidence-overlap limitation before broader quality evaluation;
+three repeatedly tuned cases cannot establish all-nine-language-pair quality.
 
-1. Extract/OCR each PDF once and cache paragraph-sized source spans with original
-   page numbers. Key the index by extracted-text hash and indexing version so an
-   OCR refresh invalidates it. Keep index creation separate from warm-query
-   latency; report cold-import costs too. Evaluation must build any missing
-   index from the supplied PDF, without labels or network downloads.
-2. Use one short Apertus call to translate the claim and proposal into search
-   terms in the source language; if metadata is absent, generate German, French
-   and Italian queries together. Preserve names, negation and quantities.
-3. Rank original paragraphs locally with [BM25](https://www.elastic.co/docs/reference/elasticsearch/index-settings/similarity)
-   and normalized text matching. Boost the intended proposal rather than
-   excluding other sections solely by a heading. Include neighboring context
-   and diverse matches; do not require the claimed number to appear, because a
-   different number may be the decisive contradiction. This can run in Python
-   without Elasticsearch or another inference model.
-4. Give Apertus the original claim and roughly 8–12 selected passages, within a
-   measured 4,000–6,000-token prompt budget, for one joint verdict. Preserve the
-   existing exact-quote and physical-page validation. Translated search terms
-   never count as source evidence. Record selected coverage;
-   do not describe retrieval as the model reading the whole booklet.
+A separate timing-only run of that same slow booklet, using the selected
+contextual-quotation version, is recorded in
+[`v5-latency-context/same-case-comparison/results.jsonl`](../output/v5-latency-context/same-case-comparison/results.jsonl):
 
-The initial warm-query target is **30–60 seconds**, not a measured result or
-guarantee. Cross-language and distributed evidence can be missed, particularly
-for neutral decisions. A weak retrieval score is not proof of neutrality or a
-calibrated confidence estimate. Use an explicit bounded expansion or report
-insufficient coverage rather than silently reverting to many minutes of work.
-Retain the exhaustive path as a comparison until quality is established.
+| Same unscored case | V0.4 exhaustive | Selected V0.5 retrieval |
+| --- | ---: | ---: |
+| Case wall time | 458,532.384 ms | 56,112.593 ms |
+| Input tokens | 62,050 | 4,363 |
+| Output tokens | 661 | 526 |
+| Model calls | 6 | 2 |
 
-Lower-risk supporting experiments are removing repeated title/language metadata
-from every source unit and reducing llama.cpp prompt-cache memory. Reconstructed
-extraction requests for this case shrink by 24.05% in UTF-8 bytes when metadata
-is sent once; token savings are unmeasured. Large prompt-cache evictions suggest
-memory pressure may contribute to overhead, but do not prove swapping. GPU
-offload, Q4 weights and disabled reasoning are already configured. Shorter
-answers alone cannot address the measured input-processing bottleneck.
+The observed change is **8.17× faster** with **92.97% fewer input tokens**. The
+model and hardware were the same; the final run selected 12 units with a warm
+lexical index and the runtime cache setting also changed. This is one unscored
+case, not a quality result or an isolated causal test of retrieval. It measures
+the combined operational setup and cannot predict every booklet's latency.
 
-Next validation should begin with a small development-only set and a fixed
-per-case deadline, recording retrieval coverage, labels, exact citations, tokens
-and cold/warm latency. Expand to all nine language pairs and the frozen quality
-cohorts only after the latency experiment is acceptable. Task A evaluation
-readiness remains unestablished.
+The launcher now sets `LOCAL_MODEL_CACHE_MB=1024`, replacing the observed
+runtime's implicit 8,192 MiB prompt-cache limit. No isolated cache-specific speed
+benefit has been measured. Earlier large cache evictions suggested memory
+pressure might contribute to overhead, but did not prove swapping. GPU offload,
+Q4 weights and disabled reasoning were already configured.
+
+The earlier request reconstruction found a 24.05% reduction in UTF-8 bytes by
+sending repeated metadata once. That was a byte estimate, not a measurement of
+token savings or runtime, and is not a V0.5 benchmark result. Faster answers
+must still preserve sufficient evidence for a correct source-relative decision;
+Task A evaluation readiness remains unestablished.

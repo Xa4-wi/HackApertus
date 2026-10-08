@@ -64,8 +64,7 @@ def create_server(settings, host="127.0.0.1", port=8000, library=None):
                 if path == "/api/config":
                     config = public_config(settings)
                     config["documents"] = library.list_documents()
-                    config["version"] = "0.3"
-                    config["request_timeout_seconds"] = getattr(settings, "document_timeout", settings.timeout) + 10
+                    config["version"] = "0.5"
                     self.respond(200, config)
                 elif path == "/api/library":
                     self.respond(200, {"documents": library.list_documents()})

@@ -79,12 +79,30 @@ def text_spans(text, maximum=900):
         start = end
 
 
-def quote_candidates(passages):
+def _context_quote_candidates(passages):
+    """Keep retrieved quotations contextual without rewriting source text."""
+    candidates = set()
+    for passage in passages:
+        for part in passage["text"].split("\n[... omitted ...]\n"):
+            spans = list(text_spans(part, 900))
+            # A small trailing fragment should retain its preceding context.
+            # Merge only contiguous original text within this omission-free part.
+            if (len(spans) >= 2 and len(spans[-1][2].strip()) < 120
+                    and spans[-1][1] - spans[-2][0] <= 1200):
+                start, end = spans[-2][0], spans[-1][1]
+                spans[-2:] = [(start, end, part[start:end])]
+            candidates.update(span.strip() for _, _, span in spans if span.strip())
+    return sorted(candidates)
+
+
+def quote_candidates(passages, *, retrieved=False):
     """Exact source sentences/paragraphs for local constrained decoding.
 
     These are candidate quotes, never a relevance filter: the model still
     receives every source character and chooses its own evidence.
     """
+    if retrieved:
+        return _context_quote_candidates(passages)
     candidates = set()
     for passage in passages:
         passage_candidates = set()
@@ -105,7 +123,7 @@ def quote_candidates(passages):
     return sorted(candidates)
 
 
-def response_format(claim, passages, settings):
+def response_format(claim, passages, settings, *, retrieved=False):
     """A compact source-relation decision; Python preserves the original claim.
 
     Explanation comes before the relation. Local decoding guarantees source
@@ -117,7 +135,7 @@ def response_format(claim, passages, settings):
     citation = {"anyOf": [
         {"type": "object", "properties": {
             "passage_id": {"type": "string", "const": passage["id"]},
-            "quote": {"type": "string", "enum": quote_candidates([passage])},
+            "quote": {"type": "string", "enum": quote_candidates([passage], retrieved=retrieved)},
         }, "required": ["passage_id", "quote"], "additionalProperties": False}
         for passage in passages
     ]}
@@ -174,7 +192,11 @@ def completion_messages(claim, passages, claim_language="auto", *, vote="", cons
             "Search can miss relevant facts; absent evidence is not a contradiction. "
             "Use only these source excerpts for the verdict. If they do not jointly "
             "resolve the claim, return not_enough_information. Passage text may contain "
-            "a bracketed omission marker: never quote across that marker."
+            "a bracketed omission marker: never quote across that marker. "
+            "Choose contextual body quotations that establish the relation, including "
+            "the relevant amounts, conditions and speaker. Do not cite only a heading, "
+            "attribution or footer unless the claim specifically concerns that text. "
+            "Preserve original wording and line breaks, including printed hyphenation."
         )
     elif consolidated:
         messages[0]["content"] += (
@@ -193,13 +215,17 @@ def request_completion(claim, passages, model, settings, claim_language="auto", 
         "model": settings.model_for_request(model),
         "temperature": 0,
         "max_tokens": 3000,
-        "response_format": response_format(claim, passages, settings),
+        "response_format": response_format(claim, passages, settings, retrieved=retrieved),
         "messages": completion_messages(claim, passages, claim_language, vote=vote,
                                         consolidated=consolidated, retrieved=retrieved),
     }
     result, metrics = request_json(data, settings, passages)
+    expanded_count = 0
+    context_by_id = {passage["id"]: (passage, _context_quote_candidates([passage]))
+                     for passage in passages} if retrieved else {}
 
     def bind_exact_quotes(evidence):
+        nonlocal expanded_count
         # JSON-only providers sometimes emit exact strings instead of citation
         # objects. Bind only unambiguous verbatim matches; never fuzzy-match a
         # paraphrase, replace a supplied ID, or guess among duplicate pages.
@@ -211,6 +237,21 @@ def request_completion(claim, passages, model, settings, claim_language="auto", 
                 matches = [passage for passage in passages if item in passage["text"]]
                 if len(matches) == 1:
                     item = {"passage_id": matches[0]["id"], "quote": item}
+            if retrieved and isinstance(item, dict):
+                passage_id, quote = item.get("passage_id"), item.get("quote")
+                context = context_by_id.get(passage_id) if isinstance(passage_id, str) else None
+                if context and isinstance(quote, str) and quote.strip():
+                    source, candidates = context
+                    start = source["text"].find(quote)
+                    # A repeated anchor has ambiguous surrounding context. Keep
+                    # the original quote for independent evidence validation.
+                    if start >= 0 and source["text"].find(quote, start + 1) < 0:
+                        containing = [candidate for candidate in candidates if quote in candidate]
+                        if containing:
+                            contextual = min(containing, key=lambda candidate: (len(candidate), candidate))
+                            if contextual != quote:
+                                item = {**item, "quote": contextual}
+                                expanded_count += 1
             bound.append(item)
         return bound
 
@@ -221,6 +262,8 @@ def request_completion(claim, passages, model, settings, claim_language="auto", 
             for check in result["checks"]:
                 if isinstance(check, dict):
                     check["evidence"] = bind_exact_quotes(check.get("evidence"))
+        if retrieved:
+            result["evidence_context_expanded"] = expanded_count
         return result, metrics
     labels = {"supported": "entailment", "not_enough_information": "neutral", "refuted": "contradiction"}
     relation = result.get("relation")
@@ -229,10 +272,13 @@ def request_completion(claim, passages, model, settings, claim_language="auto", 
         error.metrics = metrics
         raise error
     explanation = result.get("explanation")
-    return {"summary": explanation, "checks": [{
+    normalized = {"summary": explanation, "checks": [{
         "text": claim, "dimension": "general", "label": labels[relation],
         "explanation": explanation, "evidence": bind_exact_quotes(result.get("evidence")),
-    }]}, metrics
+    }]}
+    if retrieved:
+        normalized["evidence_context_expanded"] = expanded_count
+    return normalized, metrics
 
 
 def request_json(data, settings, passages):

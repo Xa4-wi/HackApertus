@@ -1,4 +1,4 @@
-# ClaimLens — Track 2A / OST, v0.4
+# ClaimLens — Track 2A / OST, v0.5
 
 ClaimLens checks a claim against a Swiss voting booklet and returns **0 entailment, 1 neutral, or 2 contradiction**, with exact source quotations and original PDF page references. German, French and Italian claims and booklets can be combined independently. The browser supports booklet selection/import; the CLI accepts the presentation's minimal inputs and the fuller task A/PDF and task B/reference API examples.
 
@@ -65,6 +65,9 @@ LLM_TIMEOUT_SECONDS=300
 CONTEXT_TOKENS=16384
 DOCUMENT_TIMEOUT_SECONDS=1800
 MAX_DOCUMENT_MODEL_CALLS=48
+DOCUMENT_STRATEGY=retrieval
+RETRIEVAL_PROMPT_TOKENS=5000
+RETRIEVAL_TIMEOUT_SECONDS=120
 ```
 
 No inference key or Hugging Face login is needed for the downloaded public GGUF. llama.cpp runs on this Mac with Apple Metal; the 5.06 GB artifact is a community text conversion and quantization of Apertus 1.5 8B. See [local-model.md](docs/local-model.md) for pinned provenance and installation.
@@ -81,50 +84,61 @@ Run `make check-endpoint` after configuring or starting an endpoint. It sends on
 | `LOCAL_MODEL_ID` | Optional served alias, enabled only on recognized local hostnames |
 | `LLM_TIMEOUT_SECONDS` | Shared timeout for one request and its bounded transport retries; default 120, allowed 1–600 seconds; local file uses 300 |
 | `CONTEXT_TOKENS` | Total prompt/output context; default 8,192, allowed 4,096–262,144; local file uses 16,384 |
-| `DOCUMENT_TIMEOUT_SECONDS` | Total case-analysis/recovery budget, including context planning; default 1,800, maximum 3,600 seconds |
-| `MAX_DOCUMENT_MODEL_CALLS` | Extraction, evidence reduction, final inference and transport-retry call limit; default 48, allowed 2–128 |
+| `DOCUMENT_STRATEGY` | `retrieval` by default for booklets; `exhaustive` explicitly enables the older full-source segmentation mode; Task B always uses full-reference/exhaustive processing |
+| `RETRIEVAL_PROMPT_TOKENS` | Final input budget, default 5,000, allowed 1,500–12,000; also bounded by the configured context minus output reserve |
+| `RETRIEVAL_TIMEOUT_SECONDS` | Retrieval case budget, default 120 seconds, allowed 1–300; includes source preparation in the CLI |
+| `DOCUMENT_TIMEOUT_SECONDS` | Total case-analysis/recovery budget, default 1,800, maximum 3,600 seconds; retrieval uses the smaller deadline |
+| `MAX_DOCUMENT_MODEL_CALLS` | Total inference-attempt limit, default 48, allowed 2–128; retrieval additionally caps it at four |
 
 `CONTEXT_TOKENS` must match the actual serving runtime. The local launcher now defaults to 16,384; when changing it, update both the launcher's `LOCAL_MODEL_CONTEXT` and the application's `CONTEXT_TOKENS`.
 
-Runtime environment overrides `.env`, including across endpoint/key aliases. An explicitly empty runtime endpoint does not fall back to a local file or another provider. Remote evaluator URLs ignore the local model alias and receive the official model ID. Keys stay in Python and are never sent to the browser. Transient transport/JSON failures receive bounded retries against the same endpoint. The CLI can retry a rejected model verdict once when usage is known; all attempts share the case budget. Unknown billed usage prevents an official prediction instead of being replaced by an estimate. There is no provider fallback.
+Runtime environment overrides `.env`, including across endpoint/key aliases. An explicitly empty runtime endpoint does not fall back to a local file or another provider. Remote evaluator URLs ignore the local model alias and receive the official model ID. Keys stay in Python and are never sent to the browser. Transient transport/JSON failures receive bounded retries against the same endpoint. Retrieval booklets receive one pipeline attempt with at most four total transport attempts; a rejected verdict does not restart it. Exhaustive/reference cases can retry a rejected verdict once when usage is known, within the shared case budget. Unknown billed usage prevents an official prediction instead of being replaced by an estimate. There is no provider fallback.
 
-The V0.4 prompt distinguishes missing information from an explicit contradiction about the same entity, time and condition. The model returns only `explanation`, `relation` and `evidence`, explaining its decision before selecting `supported`, `not_enough_information` or `refuted`. Python maps those relations to the official labels 0/1/2, preserves the original claim and creates one whole-claim assessment for the UI. The model need not copy the claim or generate diagnostic dimensions/subchecks. Local decoding constrains the relation and exact quotations; independent Python validation still requires valid evidence for entailment and contradiction. This design addresses observed explanation/label disagreements and is assessed through real inference, not presumed to improve accuracy because formatting tests pass.
+The compact prompt introduced in V0.4 distinguishes missing information from an explicit contradiction about the same entity, time and condition. The model returns only `explanation`, `relation` and `evidence`, explaining its decision before selecting `supported`, `not_enough_information` or `refuted`. Python maps those relations to the official labels 0/1/2, preserves the original claim and creates one whole-claim assessment for the UI. The model need not copy the claim or generate diagnostic dimensions/subchecks. Local decoding constrains the relation and exact quotations; retrieved-mode candidates retain roughly 900 characters of context, with a tiny trailing fragment merged up to 1,200 characters. Independent Python validation still requires valid evidence for entailment and contradiction. This design addresses observed explanation/label disagreements and is assessed through real inference, not presumed to improve accuracy because formatting tests pass.
 
-For ordinary JSON-object endpoints, an evidence string can be converted into a citation only when it appears verbatim in exactly one supplied passage. Ambiguous text, paraphrases and an explicitly supplied incorrect passage ID are not repaired into valid evidence. A local canonical-ID/JSON-object protocol smoke passed with 514 input tokens, 60 output tokens and 3,152.339 ms; see [the recorded result](output/v4-readiness/local-api-protocol-smoke.json). This used the local Apertus server, not the organizer's proxy.
+For ordinary JSON-object endpoints, an evidence string can be converted into a citation only when it appears verbatim in exactly one supplied passage. In retrieved mode, a unique exact anchor within its cited passage may be expanded to the containing original-source context. Python preserves the quoted words, leaves the label unchanged and reports the expansion count in processing metadata and a warning. It never joins across omitted text. Ambiguous text, paraphrases and an explicitly supplied incorrect passage ID are not repaired into valid evidence. Task B and exhaustive quotation behavior remain unchanged. A local canonical-ID/JSON-object protocol smoke passed with 514 input tokens, 60 output tokens and 3,152.339 ms; see [the recorded result](output/v4-readiness/local-api-protocol-smoke.json). This used the local Apertus server, not the organizer's proxy.
 
-## How long documents are handled
+## How booklets are handled
 
-1. Extract and retain every supplied source page with its original page number. Reference-only cases use only the supplied reference.
-2. If the complete source and reserved output fit the context, assess the claim in one model call.
-3. Otherwise partition the entire source into contiguous units. Every segment is examined by Apertus for supporting, opposing, conditional and partial evidence. The model selects unit IDs; Python reconstructs exact excerpts from the original pages.
-4. If the selected excerpts exceed the final context, Apertus ranks the original selected units in bounded windows. Every candidate is examined in each round; at most eight rounds retain fewer units until the evidence fits. IDs, page numbers and verbatim text are preserved. Reduction can omit relevant evidence, and its coverage warning remains visible.
-5. Assess the full claim against all retained excerpts together. Labels from individual chunks are never voted or aggregated.
-6. Map the model's source relation to the official label, retain the submitted claim unchanged and independently validate every cited quotation against the original source. One whole-claim assessment supplies the final classification and UI finding.
+1. Extract and retain the supplied PDF pages and original page numbers. Browser imports already cache PDF bytes and extracted text; the CLI caches extraction within a batch.
+2. If the complete source fits the default 5,000-token planned input budget, assess it in one Apertus call. Reserve 3,000 final output tokens plus a safety margin within the configured context.
+3. For a longer booklet, ask Apertus for concise claim and proposal search phrases in German, French and Italian, with at most 384 output tokens. This also handles missing language metadata. Generated phrases locate evidence; they never become evidence or replace the original claim.
+4. Rank exact paragraph-sized spans locally with BM25 and normalized word matching. Proposal terms boost matches, while neighboring passages supply context. Up to 12 candidate units are packed into the final input budget without rewriting their text.
+5. Make one final Apertus assessment of the original claim and selected source passages. Python maps the relation to label 0/1/2 and independently validates every quotation against original source text and physical PDF pages.
 
-For the configured local runtime, planning can render the actual chat template and tokenize it through llama.cpp. A conservative UTF-8 byte estimate is used when a tokenizer is unavailable, and for requests that clearly fit. Remote evaluation uses only the configured inference endpoint's chat-completions API. Planning estimates are never reported as actual usage.
+The local index is built on first search and cached under the operating system's temporary directory (`claimlens-retrieval-v1`). Its key hashes extracted text, provenance metadata and the indexing version, so an OCR/text refresh invalidates it. The cache contains lexical statistics, not predictions or gold labels. Returned evidence always comes from the current supplied document. No web search or answer cache is used during inference.
 
-The final inference pass reserves up to 3,000 output tokens; extraction and reduction passes reserve 1,600. Total provider-reported input/output tokens and elapsed time include all extraction, reduction, final and retry calls. The UI reports full-source/hierarchical strategy, source coverage, segment count, model-call count and elapsed analysis time. Detailed processing records include reduction rounds and candidate counts. Context-only tokens remain `null` because the provider does not report them separately.
+For the configured local runtime, planning can render the actual chat template and tokenize it through llama.cpp. If those endpoints are unavailable, the conservative UTF-8 byte estimate can select less text than the token budget would permit. Estimates are never reported as actual usage. The UI labels retrieved results **Selected passages**, shows selected page/unit counts, and warns that unselected pages were not examined by the model. Search can miss distributed evidence, qualifications and counter-evidence, especially for neutral decisions.
 
-Examining every segment is not a guarantee of retaining every relevant fact. Missing evidence during selection/reduction, OCR errors or mistaken interpretation can still affect classification. Invalid/incomplete extraction, too many required calls, a timeout or evidence that still cannot fit after bounded reduction produces an explicit error. Fixed capacity failures are not retried as a full analysis. The original source is examined before reduction, and the loss of candidate evidence is disclosed.
+The default retrieval budget is 120 seconds across preparation, planning, query expansion, search, final assessment and retries, with at most four transport attempts. It does not repeat the whole pipeline or automatically start exhaustive analysis. No matches, malformed queries, invalid quotes, unknown usage or an exhausted budget produce an explicit failure, never a fabricated neutral answer. PDF preparation checks the deadline between pages and limits OCR subprocesses to the remaining time; an in-process PDF parser cannot be forcibly interrupted mid-page.
+
+Set `DOCUMENT_STRATEGY=exhaustive` and restart the application to compare the previous method. It reads every source segment, selects original evidence units and, if necessary, reduces them in at most eight rounds before a joint verdict. Selection can still omit relevant facts. **Task B reference inputs always use the full-reference/exhaustive path**, even when retrieval is the configured booklet default. All model passes and retries contribute to reported tokens and elapsed time; context-only tokens remain `null` because the provider does not report them separately.
 
 ## Evaluation and readiness
 
-Use the [readiness evaluation guide](docs/evaluation.md) for V0.4. `scripts/evaluate_readiness.py` freezes a development cohort and separate final Task A/B cohorts by ballot publication date, keeps inputs apart from gold labels, records source/model/run identities and scores predictions with the official evaluator. These are small, public-data local holdouts, not the organizers' private benchmark. All nine language pairs are represented. Task B is complete. The Task A rerun was intentionally stopped at the user's request for latency redesign after **one of nine cases produced an accepted output**, without scoring that output. The cohort is incomplete, so no Task A F1 or overall readiness is claimed. See [technical_report.md](technical_report.md).
+The V0.5 retrieval implementation has a separate three-case development latency check in `scripts/evaluate_fast.py`. It uses previously exercised ballot dates, one case for each label and the pairs DE→FR, FR→IT and IT→DE. The selected [contextual-quotation run](output/v5-latency-context/summary.json) produced **3/3 correct labels**, no failures, **54.97 seconds mean / 70.63 seconds p95**, and **12,819 input / 1,632 output tokens** total. Each case used two model calls and a cached lexical index; PDF extraction was repeated. Official gold-passage overlap was **0.50 (1/2 non-neutral cases)**, while all three returned quotes independently verified on their actual PDF pages. These same three cases were reused for tuning, so this is not a fresh quality estimate and cannot establish general readiness. The new version has not rerun the full nine-case Task A or 54-case Task B cohorts. See the [evaluation guide](docs/evaluation.md) and [technical report](technical_report.md).
 
-The completed booklet case took **458,532.384 ms (458.53 seconds)**, with **62,050 input / 661 output tokens**, **six model calls** and **one reduction round**. The following in-flight case was interrupted with incomplete usage; all original records are preserved. Testing and evaluation are stopped. The local model, UI and Colima VM are stopped, with no listener on ports 8081 or 8000. The final image rebuild and PDF regeneration remain pending.
-
-The two predetermined Task B cohorts together achieved **50/54 correct**, **macro-F1 0.924722**, **54 accepted predictions and no failures**. An independent audit verified all **34 returned exact quotations** against their supplied references. Mean case time was **15.85 seconds**, p95 **27.74 seconds**. The [combined score](output/v4-readiness/final-b-combined/summary.json) recomputes metrics across all original predictions rather than averaging cohort F1 scores. Task B retains its recorded source identity from before the long-document fix; its short-source inference path is unchanged. This does not establish current Task A or private-benchmark performance.
-
-The completed [V0.4 development run](output/v4-readiness/development/summary.json) produced 27 valid predictions with no failures: **25/27 correct**, **macro-F1 0.927451**, and all **9/9 neutral cases correct**. Mean case time was **17.8 seconds** and p95 **30.7 seconds**. The official scorer reported no format issues. This development cohort was available for tuning, so its score does not establish final-cohort or private-benchmark performance.
-
-From `track_2a/`, after the frozen cohorts have been prepared:
+From `track_2a/`, prepare a new directory, then run and score it:
 
 ```bash
-.venv/bin/python scripts/evaluate_readiness.py run --directory output/v4-readiness/development --resume
-.venv/bin/python scripts/evaluate_readiness.py score --directory output/v4-readiness/development
+.venv/bin/python scripts/evaluate_fast.py prepare --directory output/my-v5-latency
+.venv/bin/python scripts/evaluate_fast.py run --directory output/my-v5-latency
+.venv/bin/python scripts/evaluate_fast.py score --directory output/my-v5-latency
 ```
 
-Follow the guide to prepare a fresh run, freeze the implementation before final-cohort inference, and score Task A/B separately. A changed source/model/input identity cannot silently resume an older run. Run evaluation separately from browser checks on the single local model.
+The selected version also repeated the previously slow booklet as a [timing-only comparison](output/v5-latency-context/same-case-comparison/results.jsonl): **56.11 seconds versus 458.53 seconds** (8.17× faster), **4,363 versus 62,050 input tokens** (92.97% fewer), and two versus six calls. It used the same model/hardware, a warm index and a smaller runtime cache (1,024 versus 8,192 MiB). This one unscored case measures the combined setup change and cannot establish quality or isolate retrieval's effect.
+
+The earlier 39.15-second run in `output/v5-latency/` is preserved: its labels were correct but its two exact quotations were an attribution-only footer and a broken hyphenated line. The chosen version returns fuller context. See [the development history](docs/evaluation.md#development-history) for the repeated experiments.
+
+Run evaluation separately from browser checks on the single local model. Preserve old artifacts; changed source/model/input identities cannot resume an older run. The runner retains failures and exports only validated predictions, with source/run hashes, measured usage, latency and selected-page coverage.
+
+Historical **V0.4** observations remain available:
+
+- The [27-case development run](output/v4-readiness/development/summary.json) achieved **25/27 correct**, **macro-F1 0.927451**, with all nine neutral cases correct and no failed predictions. Mean time was **17.8 seconds**, p95 **30.7 seconds**. This was a tuning cohort.
+- The [combined Task B cohorts](output/v4-readiness/final-b-combined/summary.json) achieved **50/54 correct**, **macro-F1 0.924722**, with 54 accepted predictions and no failures. Independent audits verified all **34 returned quotations**. Mean time was **15.85 seconds**, p95 **27.74 seconds**. These measurements retain their original source identity and are not a V0.5 rerun.
+- The V0.4 exhaustive Task A run was stopped for latency redesign after one accepted, unscored output: **458.53 seconds**, **62,050 input / 661 output tokens**, **six calls** and **one reduction round**. The following case was interrupted with incomplete usage. The nine-case cohort remains incomplete; no Task A F1 is claimed.
+
+These small public-data cohorts are separate from the organizers' private benchmark. Historical failures and source snapshots remain preserved. Container software checks passed; reviewed report regeneration and authenticated organizer-endpoint verification remain separate tasks.
 
 ### Historical development workflow
 
@@ -160,14 +174,14 @@ The historical V2 run achieved 18/27 correct and macro-F1 0.556, with all nine n
 
 ### Build the reports
 
-The current Markdown report is [technical_report.md](technical_report.md). Build its V0.4 PDF with:
+The current Markdown report is [technical_report.md](technical_report.md). Build its PDF with:
 
 ```bash
 .venv/bin/python -m pip install -r requirements-report.txt
 make report
 ```
 
-`make report` uses `scripts/build_submission_report.py` and writes `output/pdf/claimlens-v4-report.pdf`, with a source/PDF hash manifest. The builder enforces the six-page limit. The report identifies **OneLegedCoder - Xavier**. Its existing PDF is an earlier draft and has not been rebuilt after the intentional evaluation stop; final measurements, image checks and PDF regeneration remain pending. Rebuild it after those results are recorded and inspect every rendered page before submission. See [report reproduction](docs/evaluation.md#build-and-review-the-report). Report generation makes no model calls.
+`make report` uses `scripts/build_submission_report.py` and writes `output/pdf/claimlens-v5-report.pdf`, with a source/PDF hash manifest. The builder enforces the six-page limit. The report identifies **OneLegedCoder - Xavier**. Earlier V0.4/V2 PDFs are historical artifacts. Regenerate the V0.5 PDF from the selected implementation's measurements and inspect its pages before submission. Rebuild it after those results are recorded and inspect every rendered page before submission. See [report reproduction](docs/evaluation.md#build-and-review-the-report). Report generation makes no model calls.
 
 The historical V2 presentation PDF remains at `output/pdf/claimlens-v2-report.pdf`. It describes the earlier interface and its recorded model-quality failures; the current application has no walkthrough mode. Regenerate it explicitly with `make report-v2`, which uses `scripts/build_report.py` and requires the preserved V2 evaluation, baseline and smoke-test artifacts. This historical report must not be relabeled as a current result.
 
@@ -233,6 +247,6 @@ Each output contains `id`, integer `label`, matching `label_name`, `evidence: [{
 make test
 ```
 
-The latest completed suite passed **181 tests**, and the frontend interaction checks passed. Coverage includes both minimal and annotated task inputs, nine language pairs, exact quotation provenance, page numbering, imports, upload/URL boundaries, multilingual OCR, configuration, long-source coverage, cross-segment evidence, bounded evidence reduction, retries, partial batch preservation, call/timeout limits and token aggregation. Test inference is stubbed; these checks establish software behavior rather than Apertus accuracy.
+The selected V0.5 source passed **233 Python tests locally and 233 tests inside the `linux/amd64` submission image**, using a read-only filesystem, no network and temporary writable storage. The frontend smoke check also passed. Coverage includes both minimal and annotated task inputs, nine language pairs, exact quotation provenance, page numbering, imports, upload/URL boundaries, multilingual OCR, retrieval/cache behavior, full-reference routing, exhaustive long-source coverage, bounded evidence reduction, retries, partial batch preservation, call/deadline limits and token aggregation. Test inference is stubbed; these checks establish software behavior rather than Apertus accuracy.
 
 Limits include 256-character case IDs, 2,000 claim/vote characters, 300,000 total source characters per check, 25 MB per PDF and 200 physical PDF pages. These are implementation limits, not confirmed organizer maxima. A library import can retain more text than the inference cap; attempting to check that document still fails explicitly. OCR is bounded separately. The model-status check confirms catalog availability, not prediction quality. The organizer's authenticated inference proxy and final submission acceptance remain unverified; current local performance belongs in the technical report.

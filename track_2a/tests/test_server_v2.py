@@ -44,6 +44,8 @@ class LibraryHTTPTests(unittest.TestCase):
         self.assertNotIn(b"8081", body)
         self.assertNotIn("proposals", json.loads(body))
         self.assertNotIn("examples", json.loads(body))
+        self.assertEqual(json.loads(body)["document_strategy"], "retrieval")
+        self.assertEqual(json.loads(body)["request_timeout_seconds"], 130)
 
     def test_no_mode_defaults_to_live_and_stored_sources_are_rejected(self):
         self.library.get_proposal.return_value = {"passages": [], "warnings": []}
