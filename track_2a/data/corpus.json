@@ -1,0 +1,157 @@
+{
+  "proposals": [
+    {
+      "id": "retirement-2024-fr",
+      "title": "Retirement initiative · 3 March 2024",
+      "language": "fr",
+      "description": "French reference from the official OST dataset. Four prewritten walkthroughs show changes in numbers and cross-language claims. The source describes a proposal at the time of the vote, not current law.",
+      "source_url": "https://www.bk.admin.ch/dam/fr/sd-web/In9i5Kp4p64r/2024-03-03_explications_du_conseil_federal.pdf",
+      "is_fixture": false,
+      "examples": [
+        {
+          "id": "scope-and-numbers",
+          "title": "Find the changed numbers",
+          "claim": "Bei Annahme der Initiative steigt das Rentenalter bis 2033 auf 67 Jahre und danach um 100 % der zusätzlichen Lebenserwartung.",
+          "claim_language": "de",
+          "result": {
+            "overall": "contradiction",
+            "summary": "The claim changes two quantities: the proposal describes age 66 by 2033 and an 80% adjustment, not 67 and 100%.",
+            "checks": [
+              {
+                "text": "Bei Annahme der Initiative steigt das Rentenalter bis 2033 auf 67 Jahre und danach um 100 % der zusätzlichen Lebenserwartung.",
+                "dimension": "general",
+                "label": "contradiction",
+                "explanation": "The claim changes two quantities: the proposal describes age 66 by 2033 and an 80% adjustment, not 67 and 100%.",
+                "evidence": [
+                  {
+                    "passage_id": "reference-1",
+                    "quote": "Retraite à 66 ans d’ici 2033: Dans un premier temps, l’âge de la retraite des hommes et des femmes sera relevé à 66 ans."
+                  },
+                  {
+                    "passage_id": "reference-1",
+                    "quote": "Après 2033, l’âge de la retraite augmentera automatiquement en même temps que l’espérance de vie moyenne. Cependant, il n’augmentera pas à l’identique, mais à raison de 80 % de la durée de vie supplémentaire."
+                  }
+                ]
+              },
+              {
+                "text": "bis 2033",
+                "dimension": "date",
+                "label": "entailment",
+                "explanation": "The first stage is described as being completed by 2033.",
+                "evidence": [
+                  {
+                    "passage_id": "reference-1",
+                    "quote": "Retraite à 66 ans d’ici 2033: Dans un premier temps, l’âge de la retraite des hommes et des femmes sera relevé à 66 ans."
+                  }
+                ]
+              },
+              {
+                "text": "67 Jahre",
+                "dimension": "amount",
+                "label": "contradiction",
+                "explanation": "The source states age 66, not 67, for the first stage.",
+                "evidence": [
+                  {
+                    "passage_id": "reference-1",
+                    "quote": "Retraite à 66 ans d’ici 2033: Dans un premier temps, l’âge de la retraite des hommes et des femmes sera relevé à 66 ans."
+                  }
+                ]
+              },
+              {
+                "text": "100 %",
+                "dimension": "amount",
+                "label": "contradiction",
+                "explanation": "The adjustment is 80% of additional life expectancy, not 100%.",
+                "evidence": [
+                  {
+                    "passage_id": "reference-1",
+                    "quote": "Après 2033, l’âge de la retraite augmentera automatiquement en même temps que l’espérance de vie moyenne. Cependant, il n’augmentera pas à l’identique, mais à raison de 80 % de la durée de vie supplémentaire."
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "dataset-original",
+          "title": "Original OST example",
+          "claim": "Bei Annahme der Abstimmung wird das Rentenalter ab 2033 automatisch an die Lebenserwartung gebunden und bei einem Anstieg der Lebenserwartung um 80 % der zusätzlichen Lebenszeit angehoben.",
+          "claim_language": "de",
+          "result": {
+            "overall": "entailment",
+            "summary": "Stored OST label 0: the French reference describes an automatic adjustment linked to life expectancy at 80% of the additional lifetime. This is a dataset example, not a live model prediction.",
+            "checks": [
+              {
+                "text": "Bei Annahme der Abstimmung wird das Rentenalter ab 2033 automatisch an die Lebenserwartung gebunden und bei einem Anstieg der Lebenserwartung um 80 % der zusätzlichen Lebenszeit angehoben.",
+                "dimension": "general",
+                "label": "entailment",
+                "explanation": "Stored OST label 0: the French reference describes an automatic adjustment linked to life expectancy at 80% of the additional lifetime. This is a dataset example, not a live model prediction.",
+                "evidence": [
+                  {
+                    "passage_id": "reference-1",
+                    "quote": "Après 2033, l’âge de la retraite augmentera automatiquement en même temps que l’espérance de vie moyenne. Cependant, il n’augmentera pas à l’identique, mais à raison de 80 % de la durée de vie supplémentaire."
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "french-support",
+          "title": "Try a French claim",
+          "claim": "L’initiative prévoit de relever l’âge de la retraite des hommes et des femmes à 66 ans d’ici 2033.",
+          "claim_language": "fr",
+          "result": {
+            "overall": "entailment",
+            "summary": "The reference explicitly describes age 66 for men and women by 2033.",
+            "checks": [
+              {
+                "text": "L’initiative prévoit de relever l’âge de la retraite des hommes et des femmes à 66 ans d’ici 2033.",
+                "dimension": "general",
+                "label": "entailment",
+                "explanation": "The reference explicitly describes age 66 for men and women by 2033.",
+                "evidence": [
+                  {
+                    "passage_id": "reference-1",
+                    "quote": "Retraite à 66 ans d’ici 2033: Dans un premier temps, l’âge de la retraite des hommes et des femmes sera relevé à 66 ans."
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "italian-neutral",
+          "title": "Try an unresolved Italian claim",
+          "claim": "L’iniziativa garantisce a ogni pensionato un aumento mensile di 500 franchi.",
+          "claim_language": "it",
+          "result": {
+            "overall": "neutral",
+            "summary": "The supplied reference does not establish a guaranteed CHF 500 monthly increase for every pensioner. Missing evidence is not a contradiction.",
+            "checks": [
+              {
+                "text": "L’iniziativa garantisce a ogni pensionato un aumento mensile di 500 franchi.",
+                "dimension": "general",
+                "label": "neutral",
+                "explanation": "The supplied reference does not establish a guaranteed CHF 500 monthly increase for every pensioner. Missing evidence is not a contradiction.",
+                "evidence": []
+              }
+            ]
+          }
+        }
+      ],
+      "passages": [
+        {
+          "id": "reference-1",
+          "text": "Initiative populaire « Pour une prévoyance vieillesse sûre et pérenne (initiative sur les rentes) »\n\n\nFINANCES AVS STABLES JUSQU’EN 2030\nL’AVS est le fondement de la prévoyance vieillesse suisse. La population doit pouvoir compter sur ses rentes. Pour les protéger, le Conseil fédéral et le Parlement ont adopté, au cours des cinq dernières années, deux réformes qui augmentent les recettes et réduisent les dépenses de l’AVS : les cotisations salariales ainsi que la TVA ont été relevées et l'âge de la retraite des femmes passera progressivement à 65 ans à partir de 2025. Les finances de l’AVS sont ainsi stabilisées jusque vers 20301.\nLES DÉFIS DE L’AVS\nAfin d’assurer les rentes au-delà de 2030, de nouvelles mesures sont nécessaires principalement pour deux raisons : premièrement, le nombre de retraités augmente plus vite que le nombre de personnes actives qui financent les rentes. Deuxièmement, l’espérance de vie augmente et il faut donc verser les rentes plus longtemps. C’est pourquoi le Parlement a déjà chargé le Conseil fédéral de préparer un nouveau projet en vue de stabiliser l’AVS pour la période après 2030.\nL’INITIATIVE\nL’initiative entend financer durablement l’AVS en relevant l’âge de la retraite et en inscrivant dans la Constitution une règle de calcul automatique de cet âge. Elle prévoit deux étapes:\nRetraite à 66 ans d’ici 2033: Dans un premier temps, l’âge de la retraite des hommes et des femmes sera relevé à 66 ans. Cette étape sera réalisée progressivement entre 2028 et 2033.\nLier l’âge de la retraite à l’espérance de vie: Après 2033, l’âge de la retraite augmentera automatiquement en même temps que l’espérance de vie moyenne. Cependant, il n’augmentera pas à l’identique, mais à raison de 80 % de la durée de vie supplémentaire. D’un point de vue purement mathématique, on peut dire que si l’espérance de vie augmente d’un mois, l’âge de la retraite sera relevé de 0,8 mois. Le Conseil fédéral et le Parlement devront définir comment fonctionne cet automatisme dans le cadre de la mise en œuvre de la nouvelle disposition constitutionnelle.\nDeux mois par an au maximum: À partir de 2033, l’âge de la retraite ne pourra pas augmenter de plus de 2 mois par année, même si l’augmentation de l’espérance de vie devait justifier un relèvement plus important. Tout relèvement devra être annoncé aux personnes concernées cinq ans avant qu’elles atteignent l’âge de la retraite.\nRETRAITE À 67 ANS EN 2043\nL’âge de la retraite sera déterminé sur la base de l’espérance de vie moyenne de la population résidant en Suisse à l’âge de 65 ans. Actuellement, une personne de 65 ans a en moyenne encore 22 ans à vivre. Les scénarios démographiques de l’Office fédéral de la statistique prévoient que l’espérance de vie continuera d’augmenter à raison d’un peu plus d’un mois par an. Si cela se vérifie et que l’automatisme prévu par l’initiative est appliqué, l’âge de la retraite atteindra 67 ans en 20432.\nCONSÉQUENCES FINANCIÈRES DE L’INITIATIVE\nLe relèvement de l’âge de la retraite fera croître les recettes de l’AVS et réduira ses dépenses, étant donné que les gens travailleront plus longtemps et commenceront à percevoir leur rente plus tard. À partir de 2033, quand l’âge de la retraite sera de 66 ans, l’allègement prévu des comptes de l’AVS se montera à 2 milliards de francs par année. Ensuite, chaque relèvement automatique de l’âge de la retraite entraînera un allègement supplémentaire considérable de l’AVS. Mais du point de vue actuel, le relèvement de l’âge de la retraite à lui seul ne suffira pas à générer assez de moyens pour garantir le financement de l’AVS à long terme. C’est ce que montrent les projections de l’Office fédéral des assurances sociales sur l’évolution possible des finances de l’AVS à long terme3.\nCONSÉQUENCES POUR L’AI\nL’initiative aura aussi des conséquences sur l’assuranceinvalidité. Les bénéficiaires d’une rente AI perçoivent une rente AVS dès lors qu’ils ont atteint l’âge de la retraite. S’ils n’ont droit à la rente de vieillesse AVS qu’à un âge plus avancé, ils toucheront plus longtemps la rente AI. L’AI aura donc chaque année des dépenses supplémentaires de 200 millions de francs lorsque la retraite passera à 66 ans en 2033. Ensuite, ces coûts continueront de croître avec chaque relèvement de l’âge de la retraite.\n\n1 Calculs de l’Office fédéral des assurances sociales ( ofas.admin.ch > Assurances sociales > AVS > Réformes & révisions > Initiative populaire « Pour une prévoyance vieillesse sûre et pérenne » (initiative sur les rentes))\n2 « Espérance de vie, de 2000 à 2022 », Office fédéral de la statistique ( bfs.admin.ch > Trouver des statistiques > Population > Naissances et décès > Espérance de vie > Tableaux) ; calculs de l’Office fédéral des assurances sociales ( ofas.admin.ch > Assurances sociales > AVS > Réformes & révisions > Initiative populaire « Pour une prévoyance vieillesse sûre et pérenne » (initiative sur les rentes))\n3 Rapport de l’OFAS du 25.04.2023 à l’attention de la CSSS-N sur les conséquences de l’initiative sur les rentes sur les finances de l’AVS jusqu’en 2050 ( parlament.ch > Objet 22.054 > Documents publics des commissions)",
+          "page": null,
+          "title": "Initiative populaire « Pour une prévoyance vieillesse sûre et pérenne (initiative sur les rentes) »",
+          "url": "https://www.bk.admin.ch/dam/fr/sd-web/In9i5Kp4p64r/2024-03-03_explications_du_conseil_federal.pdf",
+          "attribution": "Federal Council explanation of the proposed retirement initiative; projections remain attributed forecasts.",
+          "language": "fr"
+        }
+      ],
+      "vote": "Initiative populaire « Pour une prévoyance vieillesse sûre et pérenne (initiative sur les rentes) »"
+    }
+  ]
+}

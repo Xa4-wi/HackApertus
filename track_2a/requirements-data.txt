@@ -1,0 +1,5 @@
+# Optional local dataset preparation; not needed in the prediction container.
+# Versions installed and verified with the project's Python 3.9 environment.
+datasets==4.5.0
+huggingface-hub==1.8.0
+pyarrow==21.0.0

@@ -1,0 +1,43 @@
+{
+  "verified_on": "2026-10-08",
+  "timezone": "Europe/Zurich",
+  "template_revision": "7f2382275461baf3fa6c8855d157d86abffe9f0e",
+  "note": "Requirements are summarized in event-requirements.md and solution-api.md. Source bodies are not bundled; hashes identify the retrieved responses, not a future live version. Notion responses contain changing metadata.",
+  "sources": [
+    {
+      "name": "ost-challenge",
+      "url": "https://hackapertus.notion.site/3deb4fec112a80258fd2ddc61616011d",
+      "sha256_of_retrieved_response": "f22c842a094f60dbc82bb3b02726464294cd00c3b1ca9ef38cc5ea2e92eea2cf"
+    },
+    {
+      "name": "solution-api-guide",
+      "url": "https://hackapertus.notion.site/solution-api-guide-ef5b4fec112a834da43101ede56300f5",
+      "sha256_of_retrieved_response": "97161e831e6d7e8530f2e2762c6c5587e3d508f0281d3d267b62e9e80337b29d"
+    },
+    {
+      "name": "submission-guide",
+      "url": "https://hackapertus.notion.site/c91b4fec112a82f6adcf81c67c2acde3",
+      "sha256_of_retrieved_response": "780b2c01797dd7932f4085b4281340f90152b020632363ec26e037ebed97e909"
+    },
+    {
+      "name": "resources-guide",
+      "url": "https://hackapertus.notion.site/0e9b4fec112a8380989881f264af0895",
+      "sha256_of_retrieved_response": "6cd37f83ac6787374d66724471356f1e5d117b077316bee775b2508f39668733"
+    },
+    {
+      "name": "ost-starter-readme",
+      "url": "https://gitlab.com/ifsoftware/hackapertus-starter/-/raw/main/README.md",
+      "sha256_of_retrieved_response": "514962ef29ba3fc1a300a4dc86f83f4a14cc757f1141a53f9bfa99ddef9309de"
+    },
+    {
+      "name": "ost-starter-main",
+      "url": "https://gitlab.com/ifsoftware/hackapertus-starter/-/raw/main/main.py",
+      "sha256_of_retrieved_response": "f72d11adebedbf7db0520fde2264d330da455f87e41ca90f2ae70542e6cbb62a"
+    },
+    {
+      "name": "ost-starter-evaluator",
+      "url": "https://gitlab.com/ifsoftware/hackapertus-starter/-/raw/main/evaluate.py",
+      "sha256_of_retrieved_response": "c96ad66334021aeb5636b113ed0f060ccfcbd2f0074c9fd37f1524f98290bd8b"
+    }
+  ]
+}

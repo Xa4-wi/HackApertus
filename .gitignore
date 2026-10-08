@@ -1,0 +1,25 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.bin
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+dist/
+build/
+.DS_Store
+.idea/
+.vscode/
+output/
+*.egg-info/
+.local/
+# Downloaded datasets and dependency / Hugging Face caches stay local.
+.cache/
+track_2a/data/local/

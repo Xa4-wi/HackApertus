@@ -1,0 +1,8 @@
+*
+!requirements.txt
+!src/
+!src/**
+!data/
+!data/corpus.json
+**/__pycache__
+**/*.pyc

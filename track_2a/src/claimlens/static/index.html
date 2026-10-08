@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f6f5ef">
+    <meta name="description" content="ClaimLens: explore the evidence behind a claim, one phrase at a time.">
+    <title>ClaimLens · Trace the claim</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="ClaimLens home"><span class="brand-mark" aria-hidden="true"></span>ClaimLens<span class="brand-period">.</span></a>
+      <div class="header-context"><span>HACK APERTUS</span><span class="header-divider"></span><span>TRACK 2A · OST</span></div>
+      <span class="prototype-badge"><span class="status-dot"></span>Research prototype</span>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div class="intro-copy">
+          <p class="eyebrow">A CLOSER LOOK AT THE CLAIM</p>
+          <h1 id="page-title">The claim is only<br>half the story.</h1>
+          <p class="intro-description">Find the words the evidence supports.<br>See exactly where the rest departs from the source.</p>
+        </div>
+        <div class="method-card" aria-label="How ClaimLens works">
+          <span class="method-label">FROM STATEMENT TO SOURCE</span>
+          <ol class="method-steps">
+            <li><span>01</span><div><strong>Separate the claim</strong><p>Amounts, dates, scope, and qualifications.</p></div></li>
+            <li><span>02</span><div><strong>Compare the evidence</strong><p>Look for support and contradiction.</p></div></li>
+            <li><span>03</span><div><strong>Keep the source in view</strong><p>Every finding comes with a traceable passage.</p></div></li>
+          </ol>
+        </div>
+      </section>
+
+      <div id="connection-error" class="notice error-notice" role="alert" hidden></div>
+
+      <section class="workspace" aria-label="Claim review workspace">
+        <div class="analysis-column">
+          <section class="input-card" aria-labelledby="input-title">
+            <div class="section-heading"><div><p class="eyebrow">START AN INQUIRY</p><h2 id="input-title">What does the evidence say?</h2></div><span class="step-number" aria-hidden="true">01</span></div>
+            <form id="claim-form">
+              <div class="form-row">
+                <div class="field proposal-field"><label for="proposal">Proposal / evidence set</label><select id="proposal" name="proposal" disabled><option>Loading evidence sets…</option></select></div>
+                <div class="field model-field"><label for="model">Apertus model</label><select id="model" name="model" disabled><option>Loading models…</option></select></div>
+              </div>
+              <p id="proposal-description" class="field-help"></p>
+
+              <div class="claim-label"><label for="claim">The claim to examine</label><div class="claim-language-field"><label for="claim-language">Language</label><select id="claim-language" name="claim_language" aria-label="Claim language"><option value="auto">Auto-detect</option><option value="de">German</option><option value="fr">French</option><option value="it">Italian</option></select></div></div>
+              <textarea id="claim" name="claim" rows="4" maxlength="2000" placeholder="Enter a claim about the selected proposal…" required disabled></textarea>
+              <div class="examples-row"><div id="examples" class="example-list" aria-label="Example claims"></div><span id="character-count">0 / 2,000</span></div>
+
+              <fieldset class="mode-fieldset"><legend>Run mode</legend><div class="run-mode">
+                <label class="mode-option"><input type="radio" name="mode" value="demo" checked><span><strong>Demo</strong><small>No model call</small></span></label>
+                <label class="mode-option" id="live-option"><input type="radio" name="mode" value="live" id="live-mode" disabled><span><strong>Live Apertus</strong><small id="live-mode-status">Checking connection</small></span></label>
+              </div></fieldset>
+              <p id="mode-description" class="mode-description">The demo is a fixed walkthrough of the example claims. It does not run a model.</p>
+              <div class="form-footer"><span class="source-scope"><span class="small-square" aria-hidden="true"></span>Grounded in the selected evidence</span><button type="submit" class="primary-button" id="check-button" disabled><span id="check-button-label">Examine claim</span><span aria-hidden="true">↗</span></button></div>
+              <p id="form-error" class="form-error" role="alert" hidden></p>
+            </form>
+          </section>
+
+          <section id="results" class="results-card" aria-labelledby="results-title" hidden>
+            <div class="section-heading result-heading"><div><p class="eyebrow">READ BETWEEN THE WORDS</p><h2 id="results-title" tabindex="-1">A closer look</h2></div><button id="download-button" class="text-button" type="button">Download JSON <span aria-hidden="true">↓</span></button></div>
+            <div class="result-meta"><span id="overall-label" class="verdict"></span><span id="result-run" class="run-badge"></span></div>
+            <p id="result-summary" class="result-summary"></p>
+            <div id="result-metrics" class="result-metrics" aria-label="Inference metrics" hidden></div>
+            <div id="result-warnings" class="result-warnings"></div>
+            <div class="claim-review"><p class="small-label">YOUR CLAIM · SELECT A HIGHLIGHT TO TRACE IT</p><p id="highlighted-claim" class="highlighted-claim"></p></div>
+            <div class="checks-header"><h3>Part-by-part review</h3><span id="check-count"></span></div>
+            <div id="checks" class="checks-list"></div>
+            <p class="result-footnote">These findings describe the selected evidence. “Unresolved” means the evidence is insufficient; it does not mean the claim is false. Challenge classes: 0 = entailment, 1 = neutral, 2 = contradiction.</p>
+          </section>
+        </div>
+
+        <aside class="evidence-column" aria-labelledby="evidence-title">
+          <div class="evidence-topline"><span class="eyebrow">THE OTHER HALF</span><span id="evidence-count" class="count-badge">SOURCE TRAIL</span></div>
+          <h2 id="evidence-title">Follow the evidence.</h2>
+          <p id="evidence-subtitle" class="evidence-description">The original words, kept close to the finding.</p>
+          <div id="evidence-content">
+            <div class="evidence-placeholder"><div class="document-icon" aria-hidden="true"><span></span><span></span><span></span></div><h3>A source for every finding.</h3><p>Examine an example claim to see the relevant passages here. Select a highlighted phrase to follow its evidence.</p></div>
+          </div>
+          <div class="evidence-key"><p class="small-label">HOW TO READ A FINDING</p><ul><li><span class="legend-dot support-dot"></span><strong>Supported</strong><span>The evidence agrees.</span></li><li><span class="legend-dot contradiction-dot"></span><strong>Contradicted</strong><span>The evidence differs.</span></li><li><span class="legend-dot neutral-dot"></span><strong>Unresolved</strong><span>More evidence is needed.</span></li></ul></div>
+          <div id="corpus-note" class="corpus-note" hidden></div>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="site-footer"><p><strong>ClaimLens.</strong> Evidence before conclusions.</p><span>Built for exploration · Hack Apertus Track 2A</span></footer>
+  </body>
+</html>
