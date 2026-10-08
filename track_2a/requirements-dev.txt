@@ -1,0 +1,14 @@
+# Local development tools; the prediction container uses requirements.txt only.
+-r requirements.txt
+
+# Dataset download and preparation.
+datasets==4.5.0
+huggingface-hub==1.8.0
+pyarrow==21.0.0
+
+# Official HackApertus evaluator.
+rapidfuzz==3.13.0
+scikit-learn==1.6.1
+
+# Technical report PDF generation.
+reportlab==5.0.1

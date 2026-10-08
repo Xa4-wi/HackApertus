@@ -188,7 +188,8 @@ const finishCheck = async () => { const pending = submit("claim-form"); await fl
   responseOverride = { ...result, validation_degraded: true };
   await finishCheck(); assert.equal(get("result-validation-warning").hidden, false);
   configuration.document_strategy = "retrieval";
-  responseOverride = { ...result, processing: { strategy: "retrieval", source_pages: 20,
+  // The physical booklet has 20 pages, including one without extracted text.
+  responseOverride = { ...result, processing: { strategy: "retrieval", source_pages: 19,
     selected_source_pages: [2, 7, 8], selected_units: 6, source_units: 84, model_calls: 2,
     context_limit_tokens: 16384, index_cache_hit: true, query_expansion: true,
     coverage: "Apertus reviewed selected passages; relevant facts elsewhere may be missing." } };

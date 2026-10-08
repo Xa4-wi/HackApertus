@@ -28,7 +28,7 @@ def source_rows(dataset_path=None, jsonl_path=None):
     try:
         from datasets import DatasetDict, load_from_disk
     except ImportError:
-        raise ValidationError("Snapshot import needs requirements-data.txt, or provide --jsonl.") from None
+        raise ValidationError("Snapshot import needs requirements-dev.txt, or provide --jsonl.") from None
     snapshot = load_from_disk(str(dataset_path))
     splits = snapshot.values() if isinstance(snapshot, DatasetDict) else [snapshot]
     for split in splits:

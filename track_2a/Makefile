@@ -3,10 +3,11 @@ IMAGE ?= claimlens:local
 PORT ?= 8000
 PLATFORM ?= linux/amd64
 DOCKER ?= docker
-CONFIG_VARS = BASE_URL API_KEY LLM_NAME LLM_BASE_URL LLM_API_KEY LLM_TIMEOUT_SECONDS LOCAL_MODEL_ID CONTEXT_TOKENS DOCUMENT_TIMEOUT_SECONDS MAX_DOCUMENT_MODEL_CALLS DOCUMENT_STRATEGY RETRIEVAL_PROMPT_TOKENS RETRIEVAL_TIMEOUT_SECONDS
+RUN_DIR ?= output/evaluations/latency
+CONFIG_VARS = BASE_URL API_KEY LLM_NAME LLM_BASE_URL LLM_API_KEY LLM_TIMEOUT_SECONDS LOCAL_MODEL_ID CONTEXT_TOKENS DOCUMENT_TIMEOUT_SECONDS MAX_DOCUMENT_MODEL_CALLS DOCUMENT_STRATEGY RETRIEVAL_PROMPT_TOKENS RETRIEVAL_TIMEOUT_SECONDS RETRIEVAL_QUERY_MODE RETRIEVAL_CITATION_MODE
 FORWARD_ENV = $(foreach var,$(CONFIG_VARS),$(if $(filter undefined,$(origin $(var))),,-e $(var)))
 
-.PHONY: run build submission dev test test-ui model-pull model-serve dataset booklets ocr-setup evaluate-prepare evaluate report report-v2 verify-submission check-endpoint
+.PHONY: run build submission dev test test-ui model-pull model-serve dataset booklets ocr-setup evaluate-prepare evaluate evaluate-score report verify-submission check-endpoint
 build:
 	$(DOCKER) build --platform $(PLATFORM) --target app -t $(IMAGE) .
 
@@ -35,7 +36,7 @@ model-serve:
 check-endpoint:
 	$(PYTHON) scripts/check_endpoint.py
 
-# Install requirements-data.txt first. Existing snapshots are preserved.
+# Install requirements-dev.txt first. Existing snapshots are preserved.
 dataset:
 	$(PYTHON) scripts/prepare_dataset.py
 
@@ -46,16 +47,16 @@ ocr-setup:
 	$(PYTHON) scripts/setup_ocr.py
 
 evaluate-prepare:
-	$(PYTHON) scripts/evaluate_local.py prepare
+	$(PYTHON) scripts/evaluate_fast.py prepare --directory "$(RUN_DIR)"
 
 evaluate:
-	$(PYTHON) scripts/evaluate_local.py run --resume
+	$(PYTHON) scripts/evaluate_fast.py run --directory "$(RUN_DIR)"
+
+evaluate-score:
+	$(PYTHON) scripts/evaluate_fast.py score --directory "$(RUN_DIR)"
 
 report:
 	$(PYTHON) scripts/build_submission_report.py
-
-report-v2:
-	$(PYTHON) scripts/build_report.py
 
 verify-submission: submission
 	$(DOCKER) run --rm --platform $(PLATFORM) --network none --read-only --tmpfs /tmp -v "$(CURDIR)/tests:/tests:ro" --entrypoint python claimlens:submission -m unittest discover -s /tests -p test_submission.py -v

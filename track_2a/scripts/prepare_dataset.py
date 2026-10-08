@@ -123,7 +123,7 @@ def main(argv=None):
         from datasets import load_dataset
         from huggingface_hub import HfApi
     except ImportError:
-        parser.error("install the optional dataset dependencies: python -m pip install -r requirements-data.txt")
+        parser.error("install the development dependencies: python -m pip install -r requirements-dev.txt")
     info = HfApi().dataset_info(DATASET_ID, revision=args.revision, token=False)
     ds = load_dataset(DATASET_ID, revision=args.revision,
                       cache_dir=str(cache / "datasets"), token=False)

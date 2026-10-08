@@ -111,6 +111,8 @@ def run_identity(inputs, settings):
             "document_strategy": settings.document_strategy,
             "retrieval_prompt_tokens": settings.retrieval_prompt_tokens,
             "retrieval_timeout_seconds": settings.retrieval_timeout,
+            "retrieval_query_mode": getattr(settings, "retrieval_query_mode", "multilingual"),
+            "retrieval_citation_mode": getattr(settings, "retrieval_citation_mode", "full"),
             "input_sha256": hashlib.sha256(Path(inputs).read_bytes()).hexdigest()}
 
 
@@ -234,7 +236,8 @@ def score_records(inputs, gold, records):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("prepare", "run", "score"))
-    parser.add_argument("--directory", type=Path, default=PROJECT_ROOT / "output" / "v2-evaluation")
+    parser.add_argument("--directory", type=Path, default=PROJECT_ROOT / "output/evaluations/reference",
+                        help="New development results (default: output/evaluations/reference)")
     parser.add_argument("--source-input", type=Path, default=PROJECT_ROOT / "data/local/ost/input/reference-train.jsonl")
     parser.add_argument("--source-gold", type=Path, default=PROJECT_ROOT / "data/local/ost/gold/reference-train.gold.jsonl")
     parser.add_argument("--per-stratum", type=int, default=1)

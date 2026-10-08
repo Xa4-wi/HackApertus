@@ -6,7 +6,7 @@ Verified on **8 October 2026** against the organizer's guide, OST's solution API
 
 ClaimLens implements **Track 2A — OST: Multilingual Natural Language Inference over Swiss Official Voting Booklets**. The task assesses a claim against supplied documents, including attributed arguments, legal detail, quantities, dates, and qualifications. Its labels describe what the source entails, leaves unresolved, or contradicts. They do not establish unrestricted real-world truth or recommend a political choice.
 
-The initial concept brief suggested one language. The verified challenge requires **all nine source–claim combinations of German (`de`), French (`fr`), and Italian (`it`)**, and both document and reference tasks. An interactive evidence review interface is an additional product feature; the CLI is the evaluation interface.
+The challenge requires **all nine source–claim combinations of German (`de`), French (`fr`), and Italian (`it`)**, and both document and reference tasks. An interactive evidence review interface is an additional product feature; the CLI is the evaluation interface.
 
 Sources: [OST challenge](https://hackapertus.notion.site/3deb4fec112a80258fd2ddc61616011d), [solution API guide](https://hackapertus.notion.site/solution-api-guide-ef5b4fec112a834da43101ede56300f5).
 
@@ -21,13 +21,13 @@ Use the human-annotated [OSTswiss/MNLIoverSwissVotingBooklets](https://huggingfa
 
 Prepare data before evaluation. Keep gold labels outside the prediction container; the predictor must never use them. Retain provenance, dataset revision, original licenses, and source languages for imported material. The official starter notes that reference rows containing only a title must also be preserved. Its first-N sampling is not necessarily balanced.
 
-The guide recommends a full-document baseline before testing retrieval or compression. RAG, OCR, Docling, embeddings, and fine-tuning are not mandatory. A later retrieval experiment should be compared with that baseline on classification quality, evidence, tokens, and time.
+The guide recommends a full-document baseline before testing retrieval or compression. RAG, OCR, Docling, embeddings, and fine-tuning are not mandatory. Retrieval should be compared with that baseline on classification quality, evidence, tokens, and time.
 
 Sources: [API guide](https://hackapertus.notion.site/solution-api-guide-ef5b4fec112a834da43101ede56300f5), [official starter README](https://gitlab.com/ifsoftware/hackapertus-starter/-/blob/main/README.md).
 
 ## Models and execution
 
-Use **Apertus v1.5** for inference. The prototype's intended first selection is `swiss-ai/Apertus-v1.5-8B`, with `swiss-ai/Apertus-v1.5-70B` as the larger alternative. Those checkpoint names are published in the [official model card](https://huggingface.co/swiss-ai/Apertus-v1.5-8B). Endpoint availability still depends on the supplied account; a checkpoint name is not proof that an endpoint currently serves it.
+Use **Apertus v1.5** for inference. The selected local model family is `swiss-ai/Apertus-v1.5-8B`, with `swiss-ai/Apertus-v1.5-70B` as the larger alternative. Those checkpoint names are published in the [official model card](https://huggingface.co/swiss-ai/Apertus-v1.5-8B). Endpoint availability still depends on the supplied account; a checkpoint name is not proof that an endpoint currently serves it.
 
 The OST guide specifies `https://api.inference.cscs.ch/v1` for development. At evaluation, the organizer injects a token-counting proxy through runtime `BASE_URL` and `API_KEY`. Every remote model call must use that URL. Local configuration must not override the injected environment. The generic template also names `LLM_NAME`, `LLM_BASE_URL`, and `LLM_API_KEY`; compatibility aliases must preserve the OST variables' precedence.
 
@@ -41,7 +41,7 @@ Preserve `track_2a/` and its template locations: `README.md`, `technical_report.
 
 The template was inspected at commit [`7f2382275461baf3fa6c8855d157d86abffe9f0e`](https://github.com/HackApertus/project-template/tree/7f2382275461baf3fa6c8855d157d86abffe9f0e). Judges expect `make run` on a clean checkout to launch Docker. The official OST API additionally requires the container entrypoint to accept `--input` and `--output`.
 
-Submission needs the reproducible repository, working entailment CLI, evidence passages, and a technical report including token usage and inference time. The [submission website](https://hackapertus.ch/online-hack/submissions) lists a **PDF report of at most six pages** for OST and **no mandatory demo video**. `make report` invokes `scripts/build_submission_report.py` to render the current `technical_report.md` and enforce the six-page limit; inspect every rendered page after final content changes. The older `scripts/build_report.py` is available only through `make report-v2` for the historical V2 presentation. Record methodology, model and configuration, context preparation, experiments, shortcomings, and what has actually been measured.
+Submission needs the reproducible repository, working entailment CLI, evidence passages, and a technical report including token usage and inference time. The [submission website](https://hackapertus.ch/online-hack/submissions) lists a **PDF report of at most six pages** for OST and **no mandatory demo video**. Both `technical_report.md` and `technical_report.pdf` sit directly in `track_2a/`. `make report` invokes `scripts/build_submission_report.py` to produce that PDF and enforce the six-page limit; build and visual-review artifacts belong in `track_2a/output/report/`. Inspect every rendered page after final content changes. The root [README](../../README.md#validation-and-delivery) describes final delivery from the active project; there is no separate `submission/` directory. Development history, archived experiments, local datasets, gold labels, model weights and credentials are excluded from final delivery. Record the delivered method, configuration, actual measurements and shortcomings in the report; keep release chronology in the workspace's `VERSION_HISTORY.md`.
 
 Sources: [template README](https://github.com/HackApertus/project-template/blob/7f2382275461baf3fa6c8855d157d86abffe9f0e/README.md), [Track 2A README](https://github.com/HackApertus/project-template/blob/7f2382275461baf3fa6c8855d157d86abffe9f0e/track_2a/README.md), [submission guide](https://hackapertus.notion.site/c91b4fec112a82f6adcf81c67c2acde3).
 
@@ -66,4 +66,4 @@ Sources: [getting started guide](https://hackapertus.notion.site/getting-started
 
 The organizer's [terms, section 6](https://hackapertus.ch/terms-and-conditions), specify Apache-2.0 for submitted source code and model weights, CC-BY-4.0 for documentation and other non-code work, and CDLA-Permissive-2.0 for submitted datasets, subject to any event-specific override. Participants retain ownership. Existing third-party content keeps its own license and attribution; importing a benchmark does not make the team its author.
 
-Before submission, recheck the live guide, run the Docker image under the judging mounts, evaluate actual Apertus outputs across both tasks and every language pair, and produce the PDF report. The public guides do not state a concurrency limit, retry policy, or a JSON error-response schema. They do not authorize treating a failed inference call as a neutral prediction.
+Before submission, recheck the live guide, run the Docker image under the judging mounts, evaluate actual Apertus outputs across both tasks and every language pair, and review the final PDF report. [validation.md](validation.md) records completed checks and remaining gaps. The public guides do not state a concurrency limit, retry policy, or a JSON error-response schema. They do not authorize treating a failed inference call as a neutral prediction.

@@ -24,7 +24,7 @@ def load_dotenv(path=None):
             continue
         key, value = line.split("=", 1)
         key, value = key.strip(), value.strip()
-        if key not in {"BASE_URL", "API_KEY", "LLM_NAME", "LLM_BASE_URL", "LLM_API_KEY", "LLM_TIMEOUT_SECONDS", "LOCAL_MODEL_ID", "CONTEXT_TOKENS", "DOCUMENT_TIMEOUT_SECONDS", "MAX_DOCUMENT_MODEL_CALLS", "DOCUMENT_STRATEGY", "RETRIEVAL_PROMPT_TOKENS", "RETRIEVAL_TIMEOUT_SECONDS"}:
+        if key not in {"BASE_URL", "API_KEY", "LLM_NAME", "LLM_BASE_URL", "LLM_API_KEY", "LLM_TIMEOUT_SECONDS", "LOCAL_MODEL_ID", "CONTEXT_TOKENS", "DOCUMENT_TIMEOUT_SECONDS", "MAX_DOCUMENT_MODEL_CALLS", "DOCUMENT_STRATEGY", "RETRIEVAL_PROMPT_TOKENS", "RETRIEVAL_TIMEOUT_SECONDS", "RETRIEVAL_QUERY_MODE", "RETRIEVAL_CITATION_MODE"}:
             continue
         if key in {"BASE_URL", "LLM_BASE_URL"} and inherited.intersection({"BASE_URL", "LLM_BASE_URL"}):
             continue
@@ -48,6 +48,8 @@ class Settings:
     document_strategy: str = "retrieval"
     retrieval_prompt_tokens: int = 5000
     retrieval_timeout: float = 120.0
+    retrieval_query_mode: str = "multilingual"
+    retrieval_citation_mode: str = "full"
 
     @property
     def local_model_configured(self):
@@ -125,9 +127,15 @@ class Settings:
             raise ValidationError("RETRIEVAL_PROMPT_TOKENS must be between 1500 and 12000; the serving context also limits it.")
         if not 1 <= retrieval_timeout <= 300:
             raise ValidationError("RETRIEVAL_TIMEOUT_SECONDS must be between 1 and 300.")
+        query_mode = os.environ.get("RETRIEVAL_QUERY_MODE", "multilingual").strip()
+        citation_mode = os.environ.get("RETRIEVAL_CITATION_MODE", "full").strip()
+        if query_mode not in ("multilingual", "source"):
+            raise ValidationError("RETRIEVAL_QUERY_MODE must be multilingual or source.")
+        if citation_mode not in ("full", "prefix"):
+            raise ValidationError("RETRIEVAL_CITATION_MODE must be full or prefix.")
         settings = cls(base_url, api_key, model, timeout, local_model_id,
                        context_tokens, document_timeout, max_calls,
-                       strategy, retrieval_tokens, retrieval_timeout)
+                       strategy, retrieval_tokens, retrieval_timeout, query_mode, citation_mode)
         if settings.local_model_configured and (
                 len(local_model_id) > 500 or any(character.isspace() for character in local_model_id)):
             raise ValidationError("LOCAL_MODEL_ID must be a model identifier of at most 500 characters without whitespace.")

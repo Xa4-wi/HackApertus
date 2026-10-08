@@ -4,17 +4,22 @@
 This small experiment uses previously exercised ballot dates, not the frozen
 final cohorts. The run command reads no gold and caps each case at 120 seconds.
 It does not execute the nine-case booklet or 54-case reference evaluations.
+Preparation requires preserved split, prior inputs and evaluator files from the
+local repository archive. Clean checkouts need that archive restored, or explicit
+--previous and --prior-inputs paths to the original artifacts.
 """
 
 import argparse
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+ARCHIVED_OUTPUT = ROOT.parent / "archive/track_2a/output"
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -42,11 +47,21 @@ def select_development_rows(rows, development_dates, forbidden_requests, seed):
 
 
 def prepare(args):
-    from datasets import load_from_disk
-
     root = args.directory
     if root.exists() and any(root.iterdir()):
         raise ValueError("Use an empty directory; the three frozen cases will not be overwritten.")
+    prior_paths = [getattr(args, "prior_inputs", ARCHIVED_OUTPUT / "v2-evaluation/input.jsonl"),
+                   args.previous / "development/input/cases.jsonl"]
+    evaluator = args.previous / "official/evaluate.py"
+    required = [*prior_paths, args.previous / "split.json", evaluator, evaluator.parent / "source.json"]
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise ValueError("Preserved evaluation artifacts are missing: {}. Restore the local evaluation archive "
+                         "or pass --previous and --prior-inputs pointing to the original artifacts. "
+                         "A replacement cohort will not be selected without that history."
+                         .format(", ".join(missing)))
+    from datasets import load_from_disk
+
     dataset = json.loads((args.dataset / "manifest.json").read_text())
     if dataset.get("revision") != readiness.DATASET_REVISION:
         raise ValueError("Use the pinned OST dataset snapshot.")
@@ -54,7 +69,6 @@ def prepare(args):
     dates = split["development_dates"]
     if set(dates) & set(split["final_dates"]):
         raise ValueError("Development and final ballot dates overlap.")
-    prior_paths = [ROOT / "output/v2-evaluation/input.jsonl", args.previous / "development/input/cases.jsonl"]
     forbidden = {readiness.fingerprint(case) for path in prior_paths for case in readiness.read_jsonl(path)}
     rows = list(load_from_disk(str(args.dataset / "dataset"))["train"])
     chosen = select_development_rows(rows, dates, forbidden, args.seed)
@@ -63,7 +77,6 @@ def prepare(args):
         key = row["booklet_url"], row["reference_language"]
         if key not in library or not library[key][0].is_file():
             raise ValueError("A selected booklet is missing from the local library.")
-    evaluator = args.previous / "official/evaluate.py"
     provenance = json.loads((evaluator.parent / "source.json").read_text())
     if readiness.sha256(evaluator) != provenance["sha256"]:
         raise ValueError("The preserved official evaluator does not match its recorded hash.")
@@ -97,7 +110,8 @@ def prepare(args):
         "dataset_manifest_sha256": readiness.sha256(args.dataset / "manifest.json"),
         "dataset_arrow_sha256": {str(path.relative_to(args.dataset)): readiness.sha256(path)
                                  for path in sorted((args.dataset / "dataset").rglob("*.arrow"))},
-        "prior_input_sha256": {str(path.relative_to(ROOT)): readiness.sha256(path) for path in prior_paths},
+        "prior_input_path_base": "track_2a",
+        "prior_input_sha256": {os.path.relpath(path.resolve(), ROOT): readiness.sha256(path) for path in prior_paths},
         "source_to_claim_language_pairs": ["{}->{}".format(source, claim) for source, claim, _ in STRATA],
         "development_dates_allowed": dates, "final_dates_excluded": split["final_dates"],
         "maximum_cases": MAX_CASES, "maximum_case_seconds": MAX_CASE_SECONDS,
@@ -126,10 +140,14 @@ def validate_small_cohort(folder):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("prepare", "run", "score"))
-    parser.add_argument("--directory", type=Path, default=ROOT / "output/v5-latency")
+    parser.add_argument("--directory", type=Path, default=ROOT / "output/evaluations/latency",
+                        help="New development results (default: output/evaluations/latency)")
     parser.add_argument("--dataset", type=Path, default=ROOT / "data/local/ost")
     parser.add_argument("--library", type=Path, default=ROOT / "data/local/library")
-    parser.add_argument("--previous", type=Path, default=ROOT / "output/v4-readiness")
+    parser.add_argument("--previous", type=Path, default=ARCHIVED_OUTPUT / "v4-readiness",
+                        help="Preserved readiness split and evaluator required by prepare; defaults to the local archive")
+    parser.add_argument("--prior-inputs", type=Path, default=ARCHIVED_OUTPUT / "v2-evaluation/input.jsonl",
+                        help="Preserved earlier inputs required by prepare; defaults to the local archive")
     parser.add_argument("--seed", default="claimlens-v5-latency-20261008")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()

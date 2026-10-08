@@ -123,7 +123,54 @@ def quote_candidates(passages, *, retrieved=False):
     return sorted(candidates)
 
 
-def response_format(claim, passages, settings, *, retrieved=False):
+def _context_quote_prefixes(passage):
+    """Map exact native-decoding prefixes to the unchanged contextual quotes.
+
+    A prefix must finish a word and occur exactly once in the supplied passage.
+    Start at 80 characters; common openings extend beyond 160 when necessary.
+    If even the complete candidate repeats, keep that full quotation: its text
+    and page remain exact without guessing which occurrence supplied context.
+    """
+    source = passage["text"]
+    aliases = {}
+    for quote in _context_quote_candidates([passage]):
+        alias = quote
+        boundaries = (match.end() for match in re.finditer(r"\S+", quote)
+                      if 80 <= match.end() < len(quote))
+        for end in boundaries:
+            prefix = quote[:end]
+            start = source.find(prefix)
+            if start >= 0 and source.find(prefix, start + 1) < 0:
+                alias = prefix
+                break
+        aliases[alias] = quote
+    return aliases
+
+
+def _prefix_citations(settings, retrieved):
+    return (retrieved and settings.local_model_configured
+            and getattr(settings, "retrieval_citation_mode", "full") == "prefix")
+
+
+def _eligible_context_quote_prefixes(passages):
+    """Experiment: prefer substantial candidates across all retrieved pages.
+
+    This is a structural length filter, not a semantic relevance judgment. It
+    never changes the source text shown to the classifier. If all candidates
+    are short, preserve them so genuinely short evidence remains available.
+    """
+    aliases = {passage["id"]: _context_quote_prefixes(passage) for passage in passages}
+
+    def substantial(quote):
+        return len(quote) >= 200 and len(quote.split()) >= 25
+
+    if any(substantial(quote) for candidates in aliases.values() for quote in candidates.values()):
+        aliases = {identifier: {prefix: quote for prefix, quote in candidates.items() if substantial(quote)}
+                   for identifier, candidates in aliases.items()}
+    return {identifier: candidates for identifier, candidates in aliases.items() if candidates}
+
+
+def response_format(claim, passages, settings, *, retrieved=False, _prefixes=None):
     """A compact source-relation decision; Python preserves the original claim.
 
     Explanation comes before the relation. Local decoding guarantees source
@@ -132,17 +179,26 @@ def response_format(claim, passages, settings, *, retrieved=False):
     """
     if not settings.local_model_configured:
         return {"type": "json_object"}
+    use_prefixes = _prefix_citations(settings, retrieved)
+    prefixes = (_eligible_context_quote_prefixes(passages) if _prefixes is None else _prefixes) if use_prefixes else {}
     citation = {"anyOf": [
         {"type": "object", "properties": {
             "passage_id": {"type": "string", "const": passage["id"]},
-            "quote": {"type": "string", "enum": quote_candidates([passage], retrieved=retrieved)},
+            "quote": {"type": "string", "enum": (list(prefixes[passage["id"]])
+                      if use_prefixes else quote_candidates([passage], retrieved=retrieved))},
         }, "required": ["passage_id", "quote"], "additionalProperties": False}
         for passage in passages
+        if not use_prefixes or passage["id"] in prefixes
     ]}
+    evidence_schema = {"type": "array", "items": citation, "maxItems": 5}
+    if use_prefixes and not citation["anyOf"]:
+        # No textual candidate exists: allow only an empty evidence array.
+        # Avoid empty enums or anyOf arrays, which are invalid JSON Schemas.
+        evidence_schema = {"type": "array", "items": {"type": "string"}, "maxItems": 0}
     schema = {"type": "object", "properties": {
         "explanation": {"type": "string", "minLength": 1, "maxLength": 1000},
         "relation": {"type": "string", "enum": ["supported", "not_enough_information", "refuted"]},
-        "evidence": {"type": "array", "items": citation, "maxItems": 5},
+        "evidence": evidence_schema,
     }, "required": ["explanation", "relation", "evidence"], "additionalProperties": False}
     return {"type": "json_schema", "json_schema": {"name": "claimlens", "strict": True, "schema": schema}}
 
@@ -211,11 +267,14 @@ def completion_messages(claim, passages, claim_language="auto", *, vote="", cons
 
 def request_completion(claim, passages, model, settings, claim_language="auto", *, vote="", consolidated=False, retrieved=False):
     """Make one bounded request. Callers must explicitly select live mode."""
+    use_prefixes = _prefix_citations(settings, retrieved)
+    prefixes_by_id = _eligible_context_quote_prefixes(passages) if use_prefixes else {}
     data = {
         "model": settings.model_for_request(model),
         "temperature": 0,
         "max_tokens": 3000,
-        "response_format": response_format(claim, passages, settings, retrieved=retrieved),
+        "response_format": response_format(claim, passages, settings, retrieved=retrieved,
+                                           _prefixes=prefixes_by_id),
         "messages": completion_messages(claim, passages, claim_language, vote=vote,
                                         consolidated=consolidated, retrieved=retrieved),
     }
@@ -224,8 +283,33 @@ def request_completion(claim, passages, model, settings, claim_language="auto", 
     context_by_id = {passage["id"]: (passage, _context_quote_candidates([passage]))
                      for passage in passages} if retrieved else {}
 
+    def invalid_prefix():
+        error = ValidationError("The local model returned an unregistered retrieved citation prefix.")
+        error.metrics = metrics
+        raise error
+
     def bind_exact_quotes(evidence):
         nonlocal expanded_count
+        if use_prefixes:
+            # Validate against exactly the same aliases that native decoding was
+            # offered. Arbitrary short anchors, bare strings and wrong IDs must
+            # not enter the ordinary JSON provider's permissive exact binder.
+            if not isinstance(evidence, list):
+                invalid_prefix()
+            bound = []
+            for item in evidence:
+                if not isinstance(item, dict) or set(item) != {"passage_id", "quote"}:
+                    invalid_prefix()
+                passage_id, prefix = item["passage_id"], item["quote"]
+                if not isinstance(passage_id, str) or not isinstance(prefix, str):
+                    invalid_prefix()
+                aliases = prefixes_by_id.get(passage_id, {})
+                if prefix not in aliases:
+                    invalid_prefix()
+                quote = aliases[prefix]
+                bound.append({"passage_id": passage_id, "quote": quote})
+                expanded_count += quote != prefix
+            return bound
         # JSON-only providers sometimes emit exact strings instead of citation
         # objects. Bind only unambiguous verbatim matches; never fuzzy-match a
         # paraphrase, replace a supplied ID, or guess among duplicate pages.

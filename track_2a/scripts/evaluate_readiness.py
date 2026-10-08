@@ -3,7 +3,9 @@
 
 These are local public-data holdouts, never the organizers' private benchmark.
 Only ``prepare`` and ``score`` read gold; ``run`` receives input cases alone.
-Install requirements-evaluation.txt to execute the unmodified official scorer.
+Install requirements-dev.txt to execute the unmodified official scorer.
+Preparation requires preserved prior inputs from the local repository archive,
+or an explicit --prior-inputs file; these artifacts are not in clean checkouts.
 """
 
 import argparse
@@ -20,6 +22,7 @@ import time
 import unicodedata
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ARCHIVED_OUTPUT = PROJECT_ROOT.parent / "archive/track_2a/output"
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
@@ -130,11 +133,15 @@ def library_index(library):
 
 
 def prepare(args):
-    from datasets import load_from_disk
-
     root = args.directory
     if root.exists() and any(root.iterdir()):
         raise ValueError("Choose an empty evaluation directory; frozen cases are never overwritten.")
+    if not args.prior_inputs.is_file():
+        raise ValueError("Preserved prior inputs are missing: {}. Restore the local evaluation archive "
+                         "or pass --prior-inputs with the original inputs; do not substitute a new cohort."
+                         .format(args.prior_inputs))
+    from datasets import load_from_disk
+
     manifest = json.loads((args.dataset / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("revision") != DATASET_REVISION:
         raise ValueError("This preparation requires the pinned OST dataset revision.")
@@ -317,7 +324,7 @@ def score(folder, evaluator=None):
         capture_output=True, text=True, timeout=120)
     (folder / "official-score.log").write_text(process.stdout + process.stderr, encoding="utf-8")
     if process.returncode:
-        raise ValueError("Official evaluator failed; install requirements-evaluation.txt and inspect official-score.log.")
+        raise ValueError("Official evaluator failed; install requirements-dev.txt and inspect official-score.log.")
     official = json.loads((folder / "official-score.json").read_text())
     report = {"cohort": selection["cohort"], "evaluation_type": "Public-data local holdout" if selection["cohort"].startswith("final") else "Development sample; may be used for tuning",
               "recorded_at_utc": datetime.now(timezone.utc).isoformat(), "official_evaluator": provenance,
@@ -336,7 +343,8 @@ def main():
     parser.add_argument("--directory", type=Path, required=True, help="Root for prepare; cohort directory for run/score")
     parser.add_argument("--dataset", type=Path, default=PROJECT_ROOT / "data/local/ost")
     parser.add_argument("--library", type=Path, default=PROJECT_ROOT / "data/local/library")
-    parser.add_argument("--prior-inputs", type=Path, default=PROJECT_ROOT / "output/v2-evaluation/input.jsonl")
+    parser.add_argument("--prior-inputs", type=Path, default=ARCHIVED_OUTPUT / "v2-evaluation/input.jsonl",
+                        help="Preserved earlier inputs required by prepare; defaults to the local archive")
     parser.add_argument("--evaluator", type=Path, default=Path("/private/tmp/hackapertus-starter-evaluate.py"))
     parser.add_argument("--seed", default="claimlens-v4-readiness-20261008")
     parser.add_argument("--resume", action="store_true")

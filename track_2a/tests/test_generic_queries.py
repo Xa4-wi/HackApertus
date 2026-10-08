@@ -1,5 +1,6 @@
 """Generic JSON expansion uses an explicit shape and the same planned prompt."""
 
+import copy
 import json
 import time
 import unittest
@@ -79,6 +80,71 @@ class GenericQueryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "German, French and Italian") as raised:
             validate_queries(incomplete, CLAIM, VOTE)
         self.assertFalse(raised.exception.retryable)
+
+    def test_generic_missing_or_blank_vote_hints_use_original_title_without_retry(self):
+        for votes in ({"fr": VOTE}, {"de": "", "fr": VOTE, "it": "Nuovo contributo annuale"},
+                      {"de": "  ", "fr": VOTE}, {}):
+            raw = {"claim_queries": copy.deepcopy(QUERIES["claim_queries"]), "vote_queries": votes}
+            original = copy.deepcopy(raw)
+            with self.subTest(votes=votes), patch("claimlens.fast.request_json", return_value=(raw, USAGE)) as request:
+                result, usage = request_queries(CLAIM, DEFAULT_MODEL, REMOTE, "fr", VOTE)
+            request.assert_called_once()
+            self.assertIs(usage, USAGE)
+            self.assertEqual(raw, original)
+            self.assertEqual(result["claim_queries"], original["claim_queries"])
+            self.assertEqual(set(result["vote_queries"]), {"de", "fr", "it"})
+            for language in ("de", "fr", "it"):
+                self.assertEqual(result["vote_queries"][language], votes.get(language) if votes.get(language, "").strip() else VOTE)
+            _, hints = validate_queries(result, CLAIM, VOTE)
+            self.assertEqual(hints[0], VOTE)
+            self.assertEqual(hints.count(VOTE), 1)
+
+    def test_native_schema_mode_never_fills_optional_vote_hints(self):
+        raw = {"claim_queries": QUERIES["claim_queries"], "vote_queries": {"fr": VOTE}}
+        with patch("claimlens.fast.request_json", return_value=(raw, USAGE)):
+            result, usage = request_queries(CLAIM, DEFAULT_MODEL, LOCAL, "fr", VOTE)
+        self.assertIs(result, raw)
+        self.assertIs(usage, USAGE)
+        with self.assertRaises(ValidationError):
+            validate_queries(result, CLAIM, VOTE)
+
+    def test_generic_fallback_does_not_repair_malformed_claims_or_vote_fields(self):
+        invalid = []
+        for value in (None, 240, [], "x" * 241):
+            record = copy.deepcopy(QUERIES)
+            record["vote_queries"] = {"de": value, "fr": VOTE}
+            invalid.append(record)
+        for field in ("claim_queries", "vote_queries"):
+            record = copy.deepcopy(QUERIES)
+            record[field]["en"] = "Unexpected language"
+            invalid.append(record)
+        for value in (None, "", "x" * 241):
+            record = copy.deepcopy(QUERIES)
+            record["claim_queries"]["de"] = value
+            record["vote_queries"] = {"fr": VOTE}
+            invalid.append(record)
+        record = copy.deepcopy(QUERIES)
+        del record["claim_queries"]["it"]
+        record["vote_queries"] = {"fr": VOTE}
+        invalid.append(record)
+        for raw in invalid:
+            with self.subTest(raw=raw), patch("claimlens.fast.request_json", return_value=(raw, USAGE)):
+                result, _ = request_queries(CLAIM, DEFAULT_MODEL, REMOTE, "fr", VOTE)
+            self.assertIs(result, raw)
+            with self.assertRaises(ValidationError):
+                validate_queries(result, CLAIM, VOTE)
+
+    def test_empty_vote_hints_remain_empty_and_oversized_title_is_not_truncated(self):
+        raw = {"claim_queries": QUERIES["claim_queries"], "vote_queries": {"fr": ""}}
+        with patch("claimlens.fast.request_json", return_value=(raw, USAGE)):
+            result, _ = request_queries(CLAIM, DEFAULT_MODEL, REMOTE, "fr", "")
+        self.assertEqual(result["vote_queries"], {"de": "", "fr": "", "it": ""})
+        self.assertEqual(validate_queries(result, CLAIM, "")[1], [])
+        with patch("claimlens.fast.request_json", return_value=(raw, USAGE)):
+            oversized, _ = request_queries(CLAIM, DEFAULT_MODEL, REMOTE, "fr", "x" * 241)
+        self.assertIs(oversized, raw)
+        with self.assertRaises(ValidationError):
+            validate_queries(oversized, CLAIM, "x" * 241)
 
 
 if __name__ == "__main__":

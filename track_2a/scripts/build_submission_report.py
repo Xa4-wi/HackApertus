@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the current technical_report.md, preserving the historical V2 report.
+"""Render the final PDF beside technical_report.md in the track directory.
 
 ReportLab builds an embedded-font PDF; pypdf enforces the six-page submission
 limit and records provenance. Rendering and visual inspection remain required
@@ -101,7 +101,7 @@ def markdown_story(source, style, width):
             if columns == 2:
                 widths = [width * 0.30, width * 0.70]
             elif columns == 3:
-                widths = [width * 0.25, width * 0.10, width * 0.65]
+                widths = [width * 0.25, width * 0.25, width * 0.50]
             else:
                 widths = [width / columns] * columns
             values = [[Paragraph(markup(cell), style["header_cell" if row_index == 0 else "cell"])
@@ -132,7 +132,7 @@ def markdown_story(source, style, width):
     return story
 
 
-def build(source_path, output):
+def build(source_path, output, metadata_directory=None):
     source_bytes = source_path.read_bytes()
     source = source_bytes.decode("utf-8")
     normal, bold = fonts()
@@ -172,16 +172,20 @@ def build(source_path, output):
                 "pages": len(reader.pages), "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "visual_review_required": True,
                 "note": "Render every page with pdftoppm and inspect PNGs after the latest content change before delivery."}
-    output.with_suffix(".build.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    metadata_directory = metadata_directory or ROOT / "output/report"
+    metadata_directory.mkdir(parents=True, exist_ok=True)
+    (metadata_directory / (output.stem + ".build.json")).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print("{} ({} pages; source {})".format(output, len(reader.pages), source_digest[:12]))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=ROOT / "technical_report.md")
-    parser.add_argument("--output", type=Path, default=ROOT / "output/pdf/claimlens-v5-report.pdf")
+    parser.add_argument("--output", type=Path, default=ROOT / "technical_report.pdf")
+    parser.add_argument("--metadata-directory", type=Path, default=ROOT / "output/report",
+                        help="Directory for build provenance and report review artifacts")
     args = parser.parse_args()
-    build(args.source.resolve(), args.output.resolve())
+    build(args.source.resolve(), args.output.resolve(), args.metadata_directory.resolve())
 
 
 if __name__ == "__main__":

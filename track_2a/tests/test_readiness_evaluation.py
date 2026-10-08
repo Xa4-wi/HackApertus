@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +15,14 @@ spec.loader.exec_module(evaluation)
 
 
 class ReadinessEvaluationTests(unittest.TestCase):
+    def test_prepare_requires_prior_history_before_loading_dataset_or_creating_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = SimpleNamespace(directory=root / "new-run", prior_inputs=root / "absent-history.jsonl")
+            with self.assertRaisesRegex(ValueError, "Restore the local evaluation archive"):
+                evaluation.prepare(args)
+            self.assertFalse(args.directory.exists())
+
     def rows(self):
         rows = []
         for date in ("seen", "smoke", "unseen"):

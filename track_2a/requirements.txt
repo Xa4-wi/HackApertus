@@ -1,2 +1,3 @@
+# Runtime dependencies used by the CLI, web app and prediction container.
 pypdf==6.19.0
 fonttools==4.60.2

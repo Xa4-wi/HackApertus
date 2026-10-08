@@ -365,6 +365,7 @@ function renderResult(result, source) {
   const retrieval = processing.strategy === "retrieval";
   const selectedPages = Array.isArray(processing.selected_source_pages)
     ? processing.selected_source_pages.filter((page) => Number.isInteger(page) && page > 0) : [];
+  const bookletPages = Number.isInteger(source.page_count) && source.page_count > 0 ? source.page_count : null;
   ui["result-strategy"].hidden = !retrieval;
   ui["result-strategy"].textContent = retrieval ? "Selected passages" : "";
   ui["result-coverage"].hidden = !retrieval;
@@ -375,7 +376,7 @@ function renderResult(result, source) {
     ["Analysis time", Number.isFinite(metrics.inference_seconds) ? `${metrics.inference_seconds.toFixed(1)} s` : "Not reported"],
     ["Input tokens", count(metrics.input_tokens)], ["Output tokens", count(metrics.output_tokens)],
     [retrieval ? "Pages selected / booklet" : "Source pages", retrieval
-      ? `${selectedPages.length ? count(selectedPages.length) : "Not reported"} / ${count(processing.source_pages)}` : count(processing.source_pages)],
+      ? `${selectedPages.length ? count(selectedPages.length) : "Not reported"} / ${count(bookletPages)}` : count(processing.source_pages)],
   ];
   const list = element("dl", "metric-list");
   for (const [label, value] of values) {

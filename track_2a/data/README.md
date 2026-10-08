@@ -2,18 +2,21 @@
 
 The downloaded dataset lives in the ignored `local/ost/` directory, and official
 booklets are cached under `local/library/`. Neither is included in the prediction
-image. `ost-sample.jsonl` retains a small attributed source sample for inspection.
+image or the shared project sources. Only this README belongs in the delivered
+`data/` directory, keeping it below the template's 100 MB limit. An older
+inspection-only dataset excerpt lives in `archive/track_2a/data/` at repository
+root.
 
-The former stored walkthrough is removed from the application. Its source and
-quotation examples are retained only in `tests/fixtures/reference-examples.json`
-for regression testing. The browser and CLI cannot replay them as predictions.
+Synthetic source and quotation examples in `tests/fixtures/reference-examples.json`
+are used only for regression testing. The browser and CLI always run live
+inference and cannot replay those fixtures as predictions.
 
 ## Download the full dataset
 
 Run from `track_2a/` after creating the project virtual environment:
 
 ```sh
-.venv/bin/python -m pip install -r requirements-data.txt
+.venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python scripts/prepare_dataset.py
 ```
 

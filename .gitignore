@@ -23,3 +23,10 @@ output/
 # Downloaded datasets and dependency / Hugging Face caches stay local.
 .cache/
 track_2a/data/local/
+# Completed local experiments are retained for audit, not shipped as source.
+archive/track_2a/output/
+archive/track_2a/reports/
+archive/relocation-manifest.json
+# Previous generated handoff is retained locally as historical evidence.
+/archive/legacy-submission/
+# The final track_2a/technical_report.pdf is deliberately visible to Git.
