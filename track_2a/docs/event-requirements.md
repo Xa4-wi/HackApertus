@@ -33,7 +33,7 @@ The OST guide specifies `https://api.inference.cscs.ch/v1` for development. At e
 
 The Docker target is **`linux/amd64`, CPU only**. Install dependencies and any required local weights at build time. Evaluation must not download models or dependencies. Mount `/data` read-only, write predictions to `/output`, and use `/tmp` for writable caches. Exclude secrets and `.env` files from the image. See [solution-api.md](solution-api.md) for the exact request/response contract.
 
-The [resources guide](https://hackapertus.notion.site/0e9b4fec112a8380989881f264af0895) stated, in its 6 October 2026, 18:40 CEST update, that CSCS keys had been distributed and new requests were closed. This prototype still needs a valid runtime key for a real inference run. No hosted inference or measured model result should be claimed merely because interface tests pass.
+The [resources guide](https://hackapertus.notion.site/0e9b4fec112a8380989881f264af0895) stated, in its 6 October 2026, 18:40 CEST update, that CSCS keys had been distributed and new requests were closed. Organizer/CSCS inference still needs valid supplied credentials; the configured local Apertus runtime works without an API key. Interface tests do not establish hosted access or model accuracy; report actual inference measurements separately.
 
 ## Repository and deliverables
 
@@ -41,7 +41,7 @@ Preserve `track_2a/` and its template locations: `README.md`, `technical_report.
 
 The template was inspected at commit [`7f2382275461baf3fa6c8855d157d86abffe9f0e`](https://github.com/HackApertus/project-template/tree/7f2382275461baf3fa6c8855d157d86abffe9f0e). Judges expect `make run` on a clean checkout to launch Docker. The official OST API additionally requires the container entrypoint to accept `--input` and `--output`.
 
-Submission needs the reproducible repository, working entailment CLI, evidence passages, and a technical report including token usage and inference time. The [submission website](https://hackapertus.ch/online-hack/submissions) lists a **PDF report of at most six pages** for OST and **no mandatory demo video**. The Markdown report is the maintainable source for that eventual PDF. Record methodology, model and configuration, context preparation, experiments, shortcomings, and what has actually been measured.
+Submission needs the reproducible repository, working entailment CLI, evidence passages, and a technical report including token usage and inference time. The [submission website](https://hackapertus.ch/online-hack/submissions) lists a **PDF report of at most six pages** for OST and **no mandatory demo video**. The Markdown report provides detailed project documentation; `scripts/build_report.py` builds a shorter presentation PDF using recorded measurements. Record methodology, model and configuration, context preparation, experiments, shortcomings, and what has actually been measured.
 
 Sources: [template README](https://github.com/HackApertus/project-template/blob/7f2382275461baf3fa6c8855d157d86abffe9f0e/README.md), [Track 2A README](https://github.com/HackApertus/project-template/blob/7f2382275461baf3fa6c8855d157d86abffe9f0e/track_2a/README.md), [submission guide](https://hackapertus.notion.site/c91b4fec112a82f6adcf81c67c2acde3).
 

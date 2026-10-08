@@ -1,105 +1,124 @@
-# Technical report — ClaimLens
+# Technical report — ClaimLens V2
 
 - **Track:** Track 2A — OST: Multilingual Natural Language Inference over Swiss Official Voting Booklets
 - **Event:** Hack Apertus Online, 1–16 October 2026
 - **Team:** To be completed by the submitting team
-- **Demo:** Local UI, `make dev` or Docker `make run`
-- **Status:** Local prototype, 8 October 2026; live UI and CLI smoke checks completed; no benchmark result
+- **Demo:** Local web app, `make dev` or Docker `make run`
+- **Status:** Development prototype, 8 October 2026. Software verification, the repeated 27-case development evaluation, and the full-booklet browser check completed. Model-quality failures remain documented below.
 
 ## 1. Summary
 
-ClaimLens connects a source-relative NLI verdict to the exact words behind it. The CLI implements the two official task inputs, while the optional web interface exposes whole-claim and part-by-part assessments with original-language quotations. The intended model is Apertus v1.5 8B, with 70B selectable. A small, clearly marked offline walkthrough makes the interface reviewable without a key or paid inference. No quality score is claimed.
+ClaimLens connects a source-relative NLI verdict to the exact claim words and source passages behind it. V2 adds a persistent official-booklet library, URL and PDF imports, bounded local OCR, and context-aware analysis of full documents. The CLI implements OST's task A (booklet) and task B (supplied reference) contract; the web app adds highlighted explanations, original PDF page links, runtime status, coverage and usage metrics.
 
-## 2. Architecture
+Local development uses an Apertus v1.5 8B text-backbone quantization. The interface also retains a clearly labeled, prewritten walkthrough that makes no model call. Working imports, exact quotations and software tests establish useful behavior; they do not establish general prediction accuracy.
+
+## 2. Architecture and source handling
 
 ```mermaid
 flowchart LR
-    A[Official JSONL CLI] --> B[Validate claim, vote and languages]
-    B --> C[PDF pages or supplied reference]
-    C --> D[All source passages and proposal context]
-    D --> E[Apertus v1.5 via runtime endpoint]
-    E --> F[Validate JSON, claim spans and exact quotes]
-    F --> G[Official labels, evidence and measured metrics]
-    H[Local web interface] --> I[Shared claim engine]
-    I --> D
-    H --> J[Explicit prewritten demo]
+    A[Official JSONL CLI] --> C[Validate claim, proposal and languages]
+    B[Web app: library or walkthrough] --> C
+    D[Official URL or PDF upload] --> E[Cached PDF, pages and bounded OCR]
+    E --> C
+    C --> F[Context planning: full source or all segments]
+    F --> G[Apertus assessment over source evidence]
+    G --> H[Validate spans, exact quotes and whole-claim label]
+    H --> I[Official CLI output or source-linked UI result]
 ```
 
-The application runs in Python. `booklets.py` retains PDF page positions and source-language text; `engine.py` validates findings; `llm.py` owns the only remote inference call. `cli.py` translates to and from the official contract. The static UI calls a local HTTP server. Data stays in memory during processing; the CLI writes only requested output. The predictor does not fetch documents, models, or dependencies at runtime.
+The Python modules have distinct responsibilities: `library.py` manages original PDFs and metadata; `booklets.py` extracts page text; `context.py` plans document analysis; `llm.py` implements model transport and structured output; `engine.py` checks results; `cli.py` preserves the official schema. A static HTML/CSS/JavaScript frontend uses the local HTTP API.
 
-The first model check must assess the entire claim. Its label determines NLI. Subsequent checks explain quantities, dates, population scope, qualifiers, or attribution. Part labels are not mechanically combined because doing so would misclassify disjunctions and conditionals. The code derives offsets from exact claim substrings and rejects invented quotations or source identifiers. This verifies provenance, not semantics.
+Web imports accept HTTPS PDF links on exactly `bk.admin.ch` or `www.bk.admin.ch`, or a raw uploaded PDF. Redirects are validated. Content hashes and language determine stable document IDs; repeated imports reuse stored bytes and preserve proposal titles. Imports do not run Apertus. The submitted predictor reads supplied inputs and local PDFs; it does not fetch booklets, models or dependencies during evaluation.
 
-All supplied text is sent for the first live baseline. Avoiding lexical filtering preserves evidence across language pairs and opposing sections. Future retrieval should be evaluated against this baseline. A character limit fails explicitly rather than silently removing pages. PDF extraction is cached for repeated booklet paths within a CLI batch.
+Physical, one-based PDF page positions remain intact, including blank pages. Pages with fewer than 40 non-whitespace text characters are candidates for local Poppler/Tesseract OCR. Each extraction attempts at most 20 candidate pages within a shared 180-second budget. OCR replaces text only when it recovers more than the existing scant text layer. Page-specific warnings remain visible. An exact match to an OCR transcription is not proof of an exact match to the visual PDF.
 
-## 3. Use of Apertus
+### Context and claim reasoning
 
-- **Model:** `swiss-ai/Apertus-v1.5-8B` by default; `swiss-ai/Apertus-v1.5-70B` optional.
-- **Use:** Inference only; no fine-tuning, tools, or external judge. Local development uses a downloaded community Q4_K_M text conversion of Apertus v1.5 8B (5,059,027,136 bytes), with SHA256 verified. This is not the complete multimodal checkpoint; [local model provenance](docs/local-model.md) records the conversion and revision.
-- **Location:** Local llama.cpp 0.6.0 (b11429) on Apple M4, 16GiB RAM, through `http://127.0.0.1:8081/v1`. OST's runtime `BASE_URL`/`API_KEY` take precedence over local configuration. Remote proxy calls retain official model IDs; the local alias is restricted to local hosts.
-- **Request:** Chat completions, temperature 0, maximum 3,000 output tokens. The local runtime constrains JSON with a schema; remote proxies receive JSON-object mode. Local highlight spans are limited to exact contiguous phrases of up to eight words or the entire claim. This constrains copying, not the predicted label. The prompt is versioned in `src/claimlens/llm.py`. The claim appears after the source passages to distinguish it from source text.
+When the source fits the configured context, the final assessment receives all supplied source text. Otherwise, ordered segments cover the entire source. Apertus selects potentially relevant source-unit IDs, including counter-evidence; Python reconstructs verbatim excerpts; a final pass reasons jointly over those excerpts. The application does not vote over segment labels. Original source IDs and page positions survive consolidation.
 
-The request contains the source-language proposal name, independently specified claim language, and every passage with ID, page, language, and attribution. It instructs the model to treat source text as evidence, examine conflicting passages, preserve original quotes, and distinguish opinions or forecasts from established facts. No provider retry, browsing, or shell tool is exposed to the model.
+The planner reserves output tokens and a safety margin. It can count a rendered prompt through the same local runtime's `/apply-template` and `/tokenize` APIs; otherwise it records a conservative byte-based planning estimate. These estimates never replace measured usage. Exhausted context, call or time budgets produce explicit errors rather than silent truncation. Processing every segment does not guarantee that every relevant fact reaches the final pass; the UI states this limitation.
 
-The local server exposes one 8B model, an 8,192-token combined input/output context, and one inference slot with Apple Metal offload. Remote endpoint availability remains unverified. The default UI mode is the offline walkthrough; changing the selected model there does not run it.
+The first check must assess the entire claim and determines its label: **0 entailment, 1 neutral, 2 contradiction**. Additional checks explain amounts, dates, scope, qualifications or attribution. They are not mechanically combined, which would mishandle disjunctions and conditionals. Code derives offsets from exact claim substrings and validates quotations against original passages. Citation failures become visible unresolved checks in the UI and are rejected by the submission exporter. Structural failures reject the response. This validates provenance, not semantic correctness.
 
-## 4. Data
+## 3. Apertus and runtime
 
-The walkthrough uses one real French reference from [OSTswiss/MNLIoverSwissVotingBooklets](https://huggingface.co/datasets/OSTswiss/MNLIoverSwissVotingBooklets), revision `fc2b27600310778da6bbf445651ddbca22d86269`. It concerns the 3 March 2024 retirement initiative. One dataset claim/label and three locally authored variations illustrate support, contradiction, and unresolved evidence in DE/FR/IT. All displayed explanations are prewritten. See [data/README.md](data/README.md) for attribution, hashes, and boundaries.
+The canonical model is `swiss-ai/Apertus-v1.5-8B`; the application also supports the official 70B ID when the endpoint supplies it. Local development uses a community Q4_K_M conversion of the 8B text backbone, **5,059,027,136 bytes**, with verified SHA256 and pinned revision. It is an unofficial derivative rather than the original multimodal checkpoint. [Local model provenance](docs/local-model.md) records the artifact.
 
-The source dataset declares MIT. The booklet is attributed to the Swiss Federal Chancellery. No personal participant data is collected. A task B request uses only its supplied reference. Task A uses the user-supplied local PDF; there is no automatic web retrieval. The submission image excludes all demo examples and labels.
+The tested setup is llama.cpp on an Apple M4 with 16GiB RAM, Metal offload, a **16,384-token combined input/output context**, and one inference slot. The local alias is `claimlens-apertus-v1.5-8b-q4`. `LOCAL_MODEL_ID` applies only to allowlisted local endpoint hosts. Organizer-injected `BASE_URL` and `API_KEY` take precedence; remote calls retain canonical Apertus model IDs. Results distinguish the canonical model from the served alias.
 
-The full upstream `train` split was downloaded with `datasets.load_dataset` at the pinned revision and saved using `save_to_disk`: **1,488 rows**, with 495 entailment, 498 neutral, and 495 contradiction examples. All nine language pairs are present. There are 335 duplicate requests (1,153 unique) and no conflicting duplicate labels. The ignored `data/local/ost/` directory separates inference inputs, gold labels, and the labeled Hugging Face snapshot; a manifest records hashes and package versions. Booklet PDFs have not been batch-downloaded. No held-out split has been created.
+Requests use temperature 0, up to 3,000 final-output tokens, and up to 1,600 output tokens for extraction passes. Local constrained decoding requires one whole-claim check, with up to three diagnostic checks, and restricts spans and quotations to source-derived candidates. Remote proxies use JSON-object mode. The prompt treats source text as data, requests supporting and conflicting evidence, and distinguishes attributed arguments or forecasts from established facts. No fine-tuning, external judge, browsing or shell tools are used by the model.
 
-## 5. Evaluation
+Development limits are 300 seconds per model request, 1,800 seconds per document and 48 model calls per document. The browser allows the configured document budget plus a margin. Runtime health checks query availability without running inference; a healthy endpoint is not a quality assessment.
 
-| Setup | Observation | Meaning |
-| --- | --- | --- |
-| Offline walkthrough | Four examples exercise all three labels and DE/FR/IT claims | Prewritten UI demonstration, not model evaluation |
-| Unit and integration checks | **66 tests passed** with `make test`; mocked provider, JSONL tasks A/B, nine language pairs, PDF parsing, local aliases/schema, timeout and dataset export checks | Interface and provenance checks only |
-| Original French PDF | 32 pages, 41,564 extracted characters | Extraction worked for this booklet; broader OCR/layout robustness unknown |
-| Frontend | JavaScript syntax and DOM interaction harness, four local HTTP examples | Functional smoke check; no browser screenshot review |
-| Docker | Docker unavailable in this environment | Build/run verification remains outstanding |
-| Local Apertus CLI | Real OST row `ost-train-000000`, DE claim / FR reference: entailment (0), matching its gold label; exact quote accepted; 1,548 input tokens, 183 output tokens, 40,888 ms case duration including queue wait | One smoke case, not an accuracy estimate |
-| Local Apertus UI | DE changed-number claim / FR reference: contradiction (2); 2,077 input tokens, 451 output tokens, 36,976 ms request duration | Whole-claim evidence validated; one diagnostic quote failed exact matching and was visibly downgraded |
+## 4. Data and imported collection
 
-The production CLI records provider `prompt_tokens` and `completion_tokens`, plus elapsed case milliseconds including parsing and validation. It fails if mandatory usage counts are absent, rather than substituting an estimate. UI `context_tokens` stays null when the endpoint does not report source-only token usage; source characters are counted separately. Demo runs report no model token usage. They must never be included in a model benchmark.
+The pinned [OST dataset](https://huggingface.co/datasets/OSTswiss/MNLIoverSwissVotingBooklets), revision `fc2b27600310778da6bbf445651ddbca22d86269`, contains **1,488 training rows**: 495 entailment, 498 neutral and 495 contradiction. All nine DE/FR/IT source/claim-language combinations occur. There are 1,153 unique requests and 335 duplicate rows, with no conflicting duplicate labels. The local snapshot, unlabeled inference inputs and gold labels are stored separately under ignored `data/local/ost/` paths. Labels are not sent to the model.
 
-Next evaluation: prepare labeled cases outside the predictor, run both tasks across all nine language pairs, compute separate three-class macro-F1 and evidence overlap with the official evaluator, and compare 8B/70B on observed tokens and time. The public targets (A ≥0.60, B ≥0.70) are requirements, not achieved results.
+The imported collection comprises every unique booklet URL referenced by that prepared dataset, not the entire historical archive:
 
-## 6. Limitations
+| Measure | Verified collection |
+| --- | --- |
+| Official PDFs | **60:** 20 German, 20 French, 20 Italian |
+| Original PDF pages | **3,408** |
+| Original PDF bytes | 75,993,354 |
+| Extracted text characters | 6,144,888, including whitespace |
+| Pages with recovered OCR text | **22 across 10 documents** |
+| Failed imports / rejected source rows | 0 / 0 |
 
-Real local inference has been checked on a small number of development examples. Quality across all nine language pairs is unmeasured, and the smoke examples must not be treated as held-out evaluation. Early local responses confused source text with claim text or produced invented highlights; prompt placement and local schema constraints address those structural failures. Citation failures remain possible, as observed in the UI check. A valid exact quote can still be misinterpreted. Strict quote matching can reject paraphrases or PDF whitespace variations. Invalid citations are shown as unresolved validation issues in the UI and rejected by the submission CLI; structural errors reject the whole response.
+These counts exclude temporary verification fixtures and user uploads. Some pages still have little readable text; warnings identify them. See [library provenance and OCR setup](docs/library.md).
 
-The prototype has no OCR. Image-only PDFs fail; mixed scanned/text PDFs may omit text embedded only as images. PDF extraction may scramble columns or hyphenation. The application cap is 300,000 source characters, not an exact model token budget. The local runtime's 8,192-token context is smaller and includes both input and output; longer references and full booklets can exceed it. Context shifting is disabled. Other limits are 200 pages, 25 MB per PDF, 2,000 claim characters, and 3,000 completion tokens. Repeated identical claim spans currently resolve to their first occurrence.
+The bundled walkthrough uses a French reference about the 3 March 2024 retirement initiative, one original dataset claim/label, and three authored variations. Its explanations are prewritten. The source dataset declares MIT; booklets remain attributed to the Federal Chancellery. The submission image excludes walkthrough answers and gold labels.
 
-The local HTTP server is intended for a single-user prototype. It has no deployment authentication or service scaling. Docker and visual browser rendering still need direct verification. The Markdown report must be reviewed and exported to the required maximum-six-page PDF before submission.
+## 5. Verification and evaluation
 
-## 7. Reproducibility
+### Software and end-to-end checks
 
-Preserve the template's `track_2a/` layout. Run `make test` and `make demo` for offline checks. `make run` launches the demo container; `make submission` produces a `linux/amd64` CPU predictor without gold labels. Supply only inference inputs read-only at `/data`, runtime model credentials, and a writable `/output` mount. Dependencies are installed at image build time, with `pypdf==6.19.0` pinned. Local Python 3.9.6 and the project's virtual environment were used for validation; Docker targets Python 3.12.
+| Check | Completed observation |
+| --- | --- |
+| Unit/integration suite | **125 tests passed**, plus the frontend smoke harness. Coverage includes both CLI tasks, nine language pairs, provenance, PDF/OCR, imports, runtime configuration, context budgets and token aggregation. Test inference is stubbed. |
+| Real browser | Isolated headless Chrome inspected at 1440×1050 and 390×844. Actual library selection, cached official import, synthetic PDF upload/download and offline demo passed, with no page errors or horizontal overflow. The temporary upload was removed. Earlier hierarchical-layout screenshots used marked mocks; the final live booklet screenshots contain an actual model response. |
+| Docker | `linux/amd64` image build and **two task A/B integration checks** passed with a read-only root and no external network. Inference was mocked; this does not verify the organizer's endpoint. |
+| OCR fixture | A separate image-only French PDF recovered text on physical page 2 while preserving the blank first-page warning. The fixture was not retained in the official library. |
+| Revised full-booklet browser check | **Semantic failure:** the French 3 March 2024 booklet and German changed-number claim (`67 Jahre`, `100 %`) produced entailment (0), although pages 6/21/22 establish 66 years by 2033 and 80%. All 32 source pages were processed in two segments and three model calls: **24,820 input / 559 output tokens; 179.69 seconds**. The exact cited text passed provenance checks but did not justify the verdict. |
 
-For local inference, run `make model-serve`, then `make dev` in another terminal. `make model-pull` verifies/reuses or downloads the pinned GGUF. The full dataset is stored in `data/local/ost/dataset`; `requirements-data.txt` pins download dependencies. Local smoke artifacts are in the ignored `output/local-smoke/` directory. The CLI smoke used only an exported unlabeled input; the label was compared after prediction.
+Recorded artifacts are in `output/v2-qa/`, `output/v2-smoke/` and their verification logs. Mocked screenshot values are not model measurements. The final browser response is preserved unchanged, including its incorrect label. It cited a page-22 footnote and headings ending with retirement at 67 in 2043, while the body explains 80% and page 21 states 66 by 2033. The response even mentioned those differences in its summary while labeling the claim supported. This demonstrates a reasoning and evidence-selection failure that structural JSON and exact-quote checks cannot detect. An earlier smoke result is retained separately; its correct class with a weak citation is not substituted for the final result.
 
-Temperature is zero; inference may still be nondeterministic. No benchmark seed is relevant until an actual evaluation split is selected. Record the final repository commit, endpoint/model revision, and evaluation input hashes when running the first baseline. The starting template commit is `7f2382275461baf3fa6c8855d157d86abffe9f0e`; no source commit has been fabricated for this uncommitted prototype.
+### Task B development sample
 
-## 8. Next steps
+Preparation deterministically selects **27 distinct requests**, one per label for each of the nine source/claim-language combinations. Gold labels are used for stratification and separate scoring. This is a small sample of the published training split, **not held-out evaluation**. Prompt/schema changes were informed by its observed failures, and the revised run repeats these same 27 requests. Any revised score therefore measures performance on a tuned development set.
 
-1. Establish a held-out evaluation plan accounting for duplicate requests and shared booklets; the downloaded upstream split is named `train`.
-2. Validate Docker on the judging architecture and mounts, then test task A on several actual booklets.
-3. Evaluate every language pair, failure rate, citation coverage, macro-F1, tokens, and time.
-4. Tune prompts/structured output based on observed failures; compare full context with retrieval only after establishing a measured baseline.
-5. Complete team metadata and export the final report PDF for the 16 October deadline.
+| Run | Correct / all cases | Accepted | Failures | Macro-F1 including failures |
+| --- | --- | --- | --- | --- |
+| Recorded baseline | **15/27 (55.56%)** | 19 | 8 | **0.5456** |
+| Revised local schema | **18/27 (66.67%)** | 27 | 0 | **0.5556** |
 
-## License
+The baseline's eight failures were rejected structural/claim/citation outputs, not substituted neutral predictions. Four accepted classifications were incorrect. Its recorded mean case duration was 26.93 seconds, with 69,932 input and 6,549 output tokens across the 27 recorded cases. Baseline artifacts and the source snapshot remain in `output/v2-evaluation-baseline/`.
 
-Project source code: Apache-2.0, using the template's root `LICENSE`. Project documentation: Creative Commons Attribution 4.0 (CC-BY-4.0). Imported data retains its original license and attribution. Before submitting a new generated dataset, follow the event's CDLA-Permissive-2.0 requirement and preserve third-party rights.
+The completed revised run accepted all 27 outputs. Every language pair had two correct predictions out of three. All nine entailment and nine contradiction examples were correct; **all nine neutral examples were incorrectly classified as contradiction**. Per-class F1 was 1.000 entailment, 0.000 neutral and 0.667 contradiction. The schema removed observed format failures but did not solve the distinction between missing evidence and explicit incompatibility. This is the principal model-quality issue to address next.
 
-## References
+The revised run averaged **24.11 seconds per case**, with **69,932 input and 6,742 output tokens**; usage was returned for all 27 cases. Completed records, run identity and the confusion matrix are in `output/v2-evaluation/`. Timings are observations on this local quantized runtime, not controlled throughput comparisons. The small, tuned sample does not establish the public Task B macro-F1 target of 0.70 on unseen cases.
 
-- [Official project template](https://github.com/HackApertus/project-template)
-- [OST challenge](https://hackapertus.notion.site/3deb4fec112a80258fd2ddc61616011d)
-- [Official solution API guide](https://hackapertus.notion.site/solution-api-guide-ef5b4fec112a834da43101ede56300f5)
-- [Official starter and evaluator](https://gitlab.com/ifsoftware/hackapertus-starter)
-- [OST dataset](https://huggingface.co/datasets/OSTswiss/MNLIoverSwissVotingBooklets)
-- [Apertus v1.5 model card](https://huggingface.co/swiss-ai/Apertus-v1.5-8B)
-- [Federal Chancellery booklet archive](https://www.bk.admin.ch/de/sammlung-der-abstimmungsbuechlein-seit-1978)
+The local evaluator counts failures against accuracy and F1 and records per-language-pair results, confusion and usage. It checks exact source presence, **not semantic citation relevance or the official task A evidence-overlap score**. No official task A overlap evaluation or organizer-proxy inference test has been completed. The published task targets are requirements, not achieved claims.
+
+Provider-reported prompt/completion tokens are summed across inference passes. Missing mandatory token usage prevents official export rather than being estimated. Context-only usage remains null when unreported; source characters are recorded separately. Elapsed timings include the relevant application work. Demo records must be excluded from model evaluation.
+
+## 6. Limitations and reproducibility
+
+Exact quotations can still be misinterpreted, and hierarchical selection can omit relevant evidence despite reading all segments. OCR, column order, hyphenation and repeated spans remain failure sources. OCR is triggered by scant selectable text; a scanned body with a selectable header may escape that heuristic. PDF parsing runs in-process before OCR limits, so compressed file size does not bound parser resource use. Identical claim phrases resolve to their first occurrence. Checks are capped at 300,000 source characters, PDFs at 25 MB and 200 physical pages, and claims at 2,000 characters; an imported document may exceed the inference cap and then fail explicitly. The local web server is a single-user prototype without deployment authentication or service scaling.
+
+From `track_2a/`, run `make test`, `make test-ui` and `make demo` for software/offline checks. `make model-serve` starts the local model; `make dev` starts the UI. `make dataset`, `make booklets` and `make ocr-setup` are explicit preparation steps. Runtime prediction performs no dependency or model installation. Keep application and serving context limits aligned, and avoid concurrent evaluation/UI inference on the single local slot.
+
+`make submission` builds the CPU `linux/amd64` predictor; `make verify-submission` runs isolated container contract checks. Provide read-only inputs at `/data`, the required runtime endpoint variables, and writable output/cache paths. The image includes pinned Python dependencies and PDF/OCR tools, not model weights or gold labels. `make run` launches the demo container with a persistent booklet-library mount. Local Colima context commands are in [README.md](README.md).
+
+`make evaluate-prepare` and `make evaluate` reproduce the selected development evaluation. Inputs, gold labels, selection metadata, per-case results and code/model/input identity are kept separately. A changed run identity requires a fresh output directory. Temperature zero does not guarantee bitwise determinism. Preserve artifact hashes and the final source commit; the starting template commit is `7f2382275461baf3fa6c8855d157d86abffe9f0e`.
+
+The next model-quality priority is distinguishing missing evidence from explicit contradiction. Before submission, establish an independent evaluation plan accounting for duplicates and shared booklets, measure official task A overlap, test organizer credentials, and complete team metadata. The generated presentation PDF is an engineering report, not a submitted entry.
+
+## License and references
+
+Source code uses the template's Apache-2.0 license; project documentation uses CC-BY-4.0. Imported material retains its original license and attribution. New generated datasets must follow the event's CDLA-Permissive-2.0 requirement and preserve third-party rights.
+
+- [Official template](https://github.com/HackApertus/project-template) and [verified local requirements](docs/event-requirements.md)
+- [OST challenge](https://hackapertus.notion.site/3deb4fec112a80258fd2ddc61616011d) and [solution API](https://hackapertus.notion.site/solution-api-guide-ef5b4fec112a834da43101ede56300f5)
+- [Official evaluator](https://gitlab.com/ifsoftware/hackapertus-starter) and [OST dataset](https://huggingface.co/datasets/OSTswiss/MNLIoverSwissVotingBooklets)
+- [Apertus model card](https://huggingface.co/swiss-ai/Apertus-v1.5-8B) and [Federal Chancellery archive](https://www.bk.admin.ch/de/sammlung-der-abstimmungsbuechlein-seit-1978)

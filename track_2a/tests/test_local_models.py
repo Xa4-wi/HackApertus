@@ -162,35 +162,59 @@ class LocalModelTransportTests(unittest.TestCase):
 
     def test_local_transport_constrains_shape_and_claim_length_during_decoding(self):
         settings = Settings(LOCAL_ENDPOINT, local_model_id=LOCAL_MODEL)
-        passages = [PASSAGE, {**PASSAGE, "id": "other-page", "text": "Another source passage."}]
+        passages = [PASSAGE, {**PASSAGE, "id": "other-page", "text": "Another source passage with a different statement."}]
         with patch("claimlens.llm.build_opener") as opener:
             opener.return_value.open.return_value = response()
             request_completion(CLAIM, passages, DEFAULT_MODEL, settings, "de")
             request = json.loads(opener.return_value.open.call_args.args[0].data)
-        response_format = request["response_format"]
-        self.assertEqual(response_format["type"], "json_schema")
-        self.assertTrue(response_format["json_schema"]["strict"])
-        schema = response_format["json_schema"]["schema"]
+        output = request["response_format"]
+        self.assertEqual(output["type"], "json_schema")
+        self.assertTrue(output["json_schema"]["strict"])
+        schema = output["json_schema"]["schema"]
         self.assertEqual(set(schema["required"]), {"summary", "checks"})
         self.assertFalse(schema["additionalProperties"])
-        checks = schema["properties"]["checks"]
-        self.assertEqual((checks["minItems"], checks["maxItems"]), (1, 16))
-        check = checks["items"]
-        self.assertFalse(check["additionalProperties"])
-        self.assertEqual(set(check["required"]), {"text", "dimension", "label", "explanation", "evidence"})
-        properties = check["properties"]
-        allowed_text = properties["text"]["enum"]
-        self.assertIn(CLAIM, allowed_text)
-        self.assertIn("200 Franken.", allowed_text)
-        self.assertTrue(all(text and text in CLAIM for text in allowed_text))
-        self.assertNotIn("nachdem", allowed_text)
-        self.assertEqual(set(properties["dimension"]["enum"]),
-                         {"general", "amount", "date", "scope", "qualifier", "attribution"})
-        self.assertNotIn("amount, date, scope", properties["dimension"]["enum"])
-        self.assertEqual(set(properties["label"]["enum"]), {"entailment", "neutral", "contradiction"})
-        citation = properties["evidence"]["items"]
-        self.assertEqual(set(citation["properties"]["passage_id"]["enum"]), {"p1", "other-page"})
-        self.assertFalse(citation["additionalProperties"])
+        variants = schema["properties"]["checks"]["anyOf"]
+        self.assertEqual(len(variants), 4)
+        for count, variant in enumerate(variants, start=1):
+            self.assertEqual((variant["minItems"], variant["maxItems"]), (count, count))
+            self.assertEqual(len(variant["items"]), count)
+            self.assertEqual(variant["items"][0], {"$ref": "#/definitions/whole_claim"})
+            self.assertTrue(all(item == {"$ref": "#/definitions/diagnostic"} for item in variant["items"][1:]))
+            self.assertFalse(variant["additionalItems"])
+            self.assertNotIn("prefixItems", variant)
+        for kind in ("whole_claim", "diagnostic"):
+            checks = schema["definitions"][kind]["anyOf"]
+            self.assertEqual({check["properties"]["label"]["const"] for check in checks},
+                             {"entailment", "neutral", "contradiction"})
+            for check in checks:
+                self.assertFalse(check["additionalProperties"])
+                self.assertEqual(set(check["required"]), {"text", "dimension", "label", "explanation", "evidence"})
+                properties = check["properties"]
+                label = properties["label"]["const"]
+                self.assertEqual(properties["evidence"]["minItems"], 0 if label == "neutral" else 1)
+                self.assertEqual(properties["evidence"]["items"], {"$ref": "#/definitions/citation"})
+                if kind == "whole_claim":
+                    self.assertEqual(properties["text"], {"type": "string", "const": CLAIM})
+                    self.assertEqual(properties["dimension"], {"type": "string", "const": "general"})
+                else:
+                    allowed_text = properties["text"]["enum"]
+                    self.assertIn(CLAIM, allowed_text)
+                    self.assertIn("200 Franken.", allowed_text)
+                    self.assertTrue(all(text and text in CLAIM for text in allowed_text))
+                    self.assertNotIn("nachdem", allowed_text)
+                    self.assertEqual(set(properties["dimension"]["enum"]),
+                                     {"general", "amount", "date", "scope", "qualifier", "attribution"})
+        citations = schema["definitions"]["citation"]["anyOf"]
+        self.assertEqual(len(citations), 2)
+        originals = {passage["id"]: passage["text"] for passage in passages}
+        for citation in citations:
+            properties = citation["properties"]
+            passage_id = properties["passage_id"]["const"]
+            self.assertIn(passage_id, originals)
+            quotes = properties["quote"]["enum"]
+            self.assertTrue(quotes)
+            self.assertTrue(all(quote in originals[passage_id] for quote in quotes))
+            self.assertFalse(citation["additionalProperties"])
 
     def test_allowed_claim_spans_preserve_punctuation_and_original_whitespace(self):
         claim = "  Die  jährliche,\tGebühr\nbeträgt CHF 200.  "

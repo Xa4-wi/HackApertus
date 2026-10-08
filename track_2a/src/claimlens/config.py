@@ -24,7 +24,7 @@ def load_dotenv(path=None):
             continue
         key, value = line.split("=", 1)
         key, value = key.strip(), value.strip()
-        if key not in {"BASE_URL", "API_KEY", "LLM_NAME", "LLM_BASE_URL", "LLM_API_KEY", "LLM_TIMEOUT_SECONDS", "LOCAL_MODEL_ID"}:
+        if key not in {"BASE_URL", "API_KEY", "LLM_NAME", "LLM_BASE_URL", "LLM_API_KEY", "LLM_TIMEOUT_SECONDS", "LOCAL_MODEL_ID", "CONTEXT_TOKENS", "DOCUMENT_TIMEOUT_SECONDS", "MAX_DOCUMENT_MODEL_CALLS"}:
             continue
         if key in {"BASE_URL", "LLM_BASE_URL"} and inherited.intersection({"BASE_URL", "LLM_BASE_URL"}):
             continue
@@ -42,6 +42,9 @@ class Settings:
     model: str = DEFAULT_MODEL
     timeout: float = 120.0
     local_model_id: str = ""
+    context_tokens: int = 8192
+    document_timeout: float = 1800.0
+    max_document_model_calls: int = 48
 
     @property
     def local_model_configured(self):
@@ -95,7 +98,20 @@ class Settings:
                 raise ValidationError("The model base URL is malformed.") from None
             if parts.scheme not in ("https", "http") or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
                 raise ValidationError("The model base URL must be an HTTP(S) endpoint without credentials, query or fragment.")
-        settings = cls(base_url, api_key, model, timeout, local_model_id)
+        try:
+            context_tokens = int(os.environ.get("CONTEXT_TOKENS", "8192"))
+            document_timeout = float(os.environ.get("DOCUMENT_TIMEOUT_SECONDS", "1800"))
+            max_calls = int(os.environ.get("MAX_DOCUMENT_MODEL_CALLS", "48"))
+        except ValueError:
+            raise ValidationError("Context, document timeout and model-call limits must be numbers.") from None
+        if not 4096 <= context_tokens <= 262144:
+            raise ValidationError("CONTEXT_TOKENS must be between 4096 and 262144 and match the serving runtime.")
+        if not 1 <= document_timeout <= 3600:
+            raise ValidationError("DOCUMENT_TIMEOUT_SECONDS must be between 1 and 3600.")
+        if not 2 <= max_calls <= 128:
+            raise ValidationError("MAX_DOCUMENT_MODEL_CALLS must be between 2 and 128.")
+        settings = cls(base_url, api_key, model, timeout, local_model_id,
+                       context_tokens, document_timeout, max_calls)
         if settings.local_model_configured and (
                 len(local_model_id) > 500 or any(character.isspace() for character in local_model_id)):
             raise ValidationError("LOCAL_MODEL_ID must be a model identifier of at most 500 characters without whitespace.")

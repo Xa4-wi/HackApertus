@@ -37,11 +37,15 @@ explicit incompatibility, and neutral for missing, uncertain or conflicting
 evidence. Missing support is not contradiction. Do not output confidence scores.
 The FIRST check must have dimension general and text equal to the ENTIRE claim;
 its label is the whole-claim NLI classification, including the logic of any
-disjunctions, conditionals and qualifications. Then add useful checks for
-individual parts (overlap is allowed). Assess numbers, dates, who is
+disjunctions, conditionals and qualifications. Then add at most three genuinely useful checks for
+individual parts (overlap is allowed). One whole-claim check alone is sufficient
+when extra checks would merely repeat it. Prefer short exact quotations. Assess numbers, dates, who is
 covered, quantifiers such as all/some, may/must, and proposed versus current law.
 For entailment or contradiction, at least one exact supporting quotation is
-required. A prediction is not an established outcome. A campaign argument or
+required. Quote complete explanatory sentences containing the decisive figures,
+dates and qualifications. An isolated heading, topic name or number does not
+justify a verdict: include its explanatory context and any relevant condition.
+A prediction is not an established outcome. A campaign argument or
 reported opinion supports its attribution, not the factual truth of its content.
 Read potentially contradictory passages as carefully as supporting passages.
 Never invent passage IDs or quotations. If sources cannot resolve a part, mark
@@ -65,29 +69,98 @@ def claim_spans(claim):
     return sorted(spans)
 
 
+def text_spans(text, maximum=900):
+    """Partition source text without dropping any character or changing it."""
+    start = 0
+    while start < len(text):
+        end = min(start + maximum, len(text))
+        if end < len(text):
+            # Prefer a paragraph/sentence boundary, then whitespace. Include
+            # separators in the preceding span so coverage is exact.
+            fragment = text[start:end]
+            boundaries = list(re.finditer(r"\n\s*\n|(?<=[.!?])\s+(?=\S)", fragment))
+            preferred = [match.end() for match in boundaries if match.end() >= maximum // 3]
+            if preferred:
+                end = start + preferred[-1]
+            else:
+                whitespace = list(re.finditer(r"\s+", fragment))
+                if whitespace and whitespace[-1].end() >= maximum // 2:
+                    end = start + whitespace[-1].end()
+        yield start, end, text[start:end]
+        start = end
+
+
+def quote_candidates(passages):
+    """Exact source sentences/paragraphs for local constrained decoding.
+
+    These are candidate quotes, never a relevance filter: the model still
+    receives every source character and chooses its own evidence.
+    """
+    candidates = set()
+    for passage in passages:
+        passage_candidates = set()
+        # Do not permit citations spanning the consolidation omission marker.
+        for part in passage["text"].split("\n[... omitted ...]\n"):
+            for _, _, span in text_spans(part, 700):
+                if span.strip():
+                    passage_candidates.add(span.strip())
+                for sentence in re.split(r"(?<=[.!?])\s+|\n+", span):
+                    if sentence.strip():
+                        passage_candidates.add(sentence.strip())
+        # A short heading or number alone rarely supplies the condition/date
+        # needed for NLI. Prefer contextual candidates when the page has them;
+        # retain genuinely short sources when no longer quotation exists.
+        contextual = {quote for quote in passage_candidates
+                      if len(quote) >= 30 and len(quote.split()) >= 5}
+        candidates.update(contextual or passage_candidates)
+    return sorted(candidates)
+
+
 def response_format(claim, passages, settings):
-    """Constrain the local runtime's JSON while retaining proxy compatibility."""
+    """Constrain local structure and provenance; keep remote proxy compatibility.
+
+    llama.cpp's current converter cannot combine prefixItems with a remaining
+    items schema. Fixed tuples for one to four checks enforce the first whole-
+    claim assessment and still allow up to three diagnostic highlights.
+    """
     if not settings.local_model_configured:
         return {"type": "json_object"}
-    # llama.cpp enforces this schema during decoding. Exact claim spans and
-    # quotations still undergo independent validation in engine.py.
-    citation = {"type": "object", "properties": {
-        "passage_id": {"type": "string", "enum": [p["id"] for p in passages]},
-        "quote": {"type": "string", "minLength": 1, "maxLength": 5000},
-    }, "required": ["passage_id", "quote"], "additionalProperties": False}
-    check = {"type": "object", "properties": {
-        "text": {"type": "string", "enum": claim_spans(claim)},
-        "dimension": {"type": "string", "enum": ["general", "amount", "date", "scope", "qualifier", "attribution"]},
-        "label": {"type": "string", "enum": ["entailment", "neutral", "contradiction"]},
-        "explanation": {"type": "string", "minLength": 1, "maxLength": 1000},
-        "evidence": {"type": "array", "items": citation, "maxItems": 12},
-    }, "required": ["text", "dimension", "label", "explanation", "evidence"], "additionalProperties": False}
-    schema = {"type": "object", "properties": {
-        "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
-        "checks": {"type": "array", "minItems": 1, "maxItems": 16, "items": check},
-    }, "required": ["summary", "checks"], "additionalProperties": False}
-    return {"type": "json_schema", "json_schema": {"name": "claimlens", "strict": True, "schema": schema}}
+    citation = {"anyOf": [
+        {"type": "object", "properties": {
+            "passage_id": {"type": "string", "const": passage["id"]},
+            "quote": {"type": "string", "enum": quote_candidates([passage])},
+        }, "required": ["passage_id", "quote"], "additionalProperties": False}
+        for passage in passages
+    ]}
 
+    def check_schema(whole_claim):
+        alternatives = []
+        for label in ("entailment", "neutral", "contradiction"):
+            alternatives.append({"type": "object", "properties": {
+                "text": ({"type": "string", "const": claim} if whole_claim else
+                         {"type": "string", "enum": claim_spans(claim)}),
+                "dimension": ({"type": "string", "const": "general"} if whole_claim else
+                              {"type": "string", "enum": ["general", "amount", "date", "scope", "qualifier", "attribution"]}),
+                "label": {"type": "string", "const": label},
+                "explanation": {"type": "string", "minLength": 1, "maxLength": 1000},
+                "evidence": {"type": "array", "items": {"$ref": "#/definitions/citation"},
+                             "minItems": 0 if label == "neutral" else 1, "maxItems": 12},
+            }, "required": ["text", "dimension", "label", "explanation", "evidence"], "additionalProperties": False})
+        return {"anyOf": alternatives}
+
+    schema = {"$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object", "properties": {
+                  "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+                  "checks": {"anyOf": [
+                      {"type": "array", "items": [{"$ref": "#/definitions/whole_claim"}] +
+                       [{"$ref": "#/definitions/diagnostic"}] * count,
+                       "minItems": count + 1, "maxItems": count + 1, "additionalItems": False}
+                      for count in range(4)
+                  ]},
+              }, "required": ["summary", "checks"], "additionalProperties": False,
+              "definitions": {"citation": citation, "whole_claim": check_schema(True),
+                              "diagnostic": check_schema(False)}}
+    return {"type": "json_schema", "json_schema": {"name": "claimlens", "strict": True, "schema": schema}}
 
 class _RejectRedirects(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -113,21 +186,9 @@ def completion_url(base_url):
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
-def request_completion(claim, passages, model, settings, claim_language="auto", *, vote=""):
-    """Make one bounded request. Callers must explicitly select live mode."""
-    url = completion_url(settings.base_url)
-    try:
-        timeout = float(settings.timeout)
-    except (TypeError, ValueError) as error:
-        raise ValidationError("The model timeout must be between 1 and 600 seconds.") from error
-    if not 1 <= timeout <= 600:
-        raise ValidationError("The model timeout must be between 1 and 600 seconds.")
-    data = {
-        "model": settings.model_for_request(model),
-        "temperature": 0,
-        "max_tokens": 3000,
-        "response_format": response_format(claim, passages, settings),
-        "messages": [
+def completion_messages(claim, passages, claim_language="auto", *, vote="", consolidated=False):
+    """Build the exact inference messages, also used by context planning."""
+    messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps({
                 "vote": vote,
@@ -138,8 +199,40 @@ def request_completion(claim, passages, model, settings, claim_language="auto", 
                 "claim": claim,
                 "task": "Assess the claim field above against the passages. Start checks with the entire claim copied exactly, dimension general. Quote only the short passages needed to justify the verdict.",
             }, ensure_ascii=False)},
-        ],
+        ]
+    if consolidated:
+        messages[0]["content"] += (
+            "\nThese passages are verbatim evidence selected from EVERY segment of the "
+            "supplied document. Consider all of them together, combining facts spread "
+            "across pages. An omitted fact is not a contradiction. If the evidence "
+            "does not jointly resolve the claim, return neutral. Passage text may "
+            "contain a bracketed omission marker: never quote across that marker."
+        )
+    return messages
+
+
+def request_completion(claim, passages, model, settings, claim_language="auto", *, vote="", consolidated=False):
+    """Make one bounded request. Callers must explicitly select live mode."""
+    data = {
+        "model": settings.model_for_request(model),
+        "temperature": 0,
+        "max_tokens": 3000,
+        "response_format": response_format(claim, passages, settings),
+        "messages": completion_messages(claim, passages, claim_language, vote=vote,
+                                        consolidated=consolidated),
     }
+    return request_json(data, settings, passages)
+
+
+def request_json(data, settings, passages):
+    """Shared transport for extraction and final classification."""
+    url = completion_url(settings.base_url)
+    try:
+        timeout = float(settings.timeout)
+    except (TypeError, ValueError) as error:
+        raise ValidationError("The model timeout must be between 0 and 600 seconds.") from error
+    if not 0 < timeout <= 600:
+        raise ValidationError("The model timeout must be between 0 and 600 seconds.")
     headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "ClaimLens/0.1"}
     if settings.api_key:
         if not isinstance(settings.api_key, str) or any(char in settings.api_key for char in "\r\n"):

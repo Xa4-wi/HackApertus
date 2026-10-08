@@ -2,6 +2,7 @@
 
 import copy
 
+from .context import analyze_document, processing_metadata
 from .llm import request_completion
 from .models import (ALLOWED_MODELS, CLASSIFICATIONS, DIMENSIONS, LABELS,
                      MAX_CHECKS, MAX_CLAIM_LENGTH, MAX_CONTEXT_CHARACTERS,
@@ -121,9 +122,10 @@ def check_claim(proposal, claim, model, mode, settings, *, claim_language="auto"
         result["warnings"].insert(0, "Prewritten demonstration: no model was called. The selected model is used only in live mode.")
         passages = copy.deepcopy(proposal["passages"])
         metrics = _unused_metrics(passages)
+        processing = processing_metadata(passages, settings, "demo", 0, 0)
     else:
-        # Task A is a full-document baseline. Lexical filtering would discard
-        # evidence when the claim and booklet use different languages.
+        # Every supplied page is retained. Context planning can split long
+        # documents, but cannot lexically discard cross-language evidence.
         passages = copy.deepcopy(proposal["passages"])
         if sum(len(passage["text"]) for passage in passages) > MAX_CONTEXT_CHARACTERS:
             raise ValidationError("The booklet exceeds the 300,000-character prototype context limit. The document was not truncated and no model was called.")
@@ -134,9 +136,11 @@ def check_claim(proposal, claim, model, mode, settings, *, claim_language="auto"
                       "validation_degraded": False,
                       "warnings": ["No model was called because no source passages were supplied."]}
             metrics = _unused_metrics(passages)
+            processing = processing_metadata(passages, settings, "empty", 0, 0)
         else:
-            response, metrics = request_completion(claim, passages, model, settings, claim_language,
-                                                   vote=proposal.get("vote", proposal.get("title", "")))
+            response, metrics, processing = analyze_document(
+                claim, passages, model, settings, claim_language,
+                proposal.get("vote", proposal.get("title", "")), request_completion)
             served_model = settings.model_for_request(model)
             result = validate_model_result(claim, response, passages)
             result["warnings"].append("Exact quotes were checked against the source passages. Quote provenance does not independently verify the model's interpretation.")
@@ -147,7 +151,8 @@ def check_claim(proposal, claim, model, mode, settings, *, claim_language="auto"
     result.update({"claim": claim, "model": model, "served_model": served_model,
                    "mode": mode, "passages": passages,
                    "classification": CLASSIFICATIONS[result["overall"]],
-                   "claim_language": claim_language, "metrics": metrics})
+                   "claim_language": claim_language, "metrics": metrics,
+                   "processing": processing})
     return result
 
 

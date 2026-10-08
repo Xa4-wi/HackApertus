@@ -3,6 +3,7 @@
 !src/
 !src/**
 !data/
+data/**
 !data/corpus.json
 **/__pycache__
 **/*.pyc

@@ -1,8 +1,8 @@
 # Local Apertus on Apple Silicon
 
-ClaimLens can use Apertus v1.5 8B locally through llama.cpp, with no inference API key. This setup runs `llama-server` directly on macOS and binds it to `127.0.0.1:8081`. Docker Desktop is not installed or required for this development workflow. The challenge's Docker submission remains a separate workflow.
+ClaimLens can use Apertus v1.5 8B locally through llama.cpp, with no inference API key. This setup runs `llama-server` directly on macOS and binds it to `127.0.0.1:8081`. Docker Desktop is not required for this development workflow. The challenge's Docker submission remains a separate CPU application workflow; this Mac also has a Colima `claimlens` profile for container verification.
 
-The selected model is a community Q4_K_M quantization of the Apertus v1.5 **text backbone**. It is an unofficial derivative, not the original multimodal checkpoint. The official checkpoint contains about 18.4GB of safetensors and no GGUF files; the selected GGUF is 5.06GB (4.71GiB). Runtime memory includes additional context and working buffers. On this 16GiB Apple Silicon Mac, start with the configured 8,192-token context and one request at a time.
+The selected model is a community Q4_K_M quantization of the Apertus v1.5 **text backbone**. It is an unofficial derivative, not the original multimodal checkpoint. The official checkpoint contains about 18.4GB of safetensors and no GGUF files; the selected GGUF is 5.06GB (4.71GiB). Runtime memory includes additional context and working buffers. This 16GiB Apple Silicon Mac is configured for a 16,384-token context and one inference request at a time. Long documents are processed in bounded segments when they do not fit that window.
 
 ## Prepare the model
 
@@ -41,11 +41,14 @@ API_KEY=
 LLM_NAME=swiss-ai/Apertus-v1.5-8B
 LOCAL_MODEL_ID=claimlens-apertus-v1.5-8b-q4
 LLM_TIMEOUT_SECONDS=300
+CONTEXT_TOKENS=16384
+DOCUMENT_TIMEOUT_SECONDS=1800
+MAX_DOCUMENT_MODEL_CALLS=48
 ```
 
 `LLM_NAME` remains the selected Apertus family; `LOCAL_MODEL_ID` is the identifier sent to the local server. ClaimLens applies this alias only to configured local hosts. For official evaluation, use the organizer's injected proxy configuration and official served model identifiers. Results from this quantized derivative do not establish the performance of the organizer's model.
 
-Local responses use a JSON schema that restricts labels, dimensions, passage identifiers, and verbatim claim highlights. Diagnostic highlights can cover up to eight contiguous words; the full claim is always available. Source quotations are independently checked against the input. A malformed or invented citation is still rejected, even if the JSON schema was satisfied.
+Local responses use a JSON schema that restricts labels, dimensions, passage identifiers, verbatim claim highlights and exact source sentence/paragraph quotations. Diagnostic highlights can cover up to eight contiguous words; the full claim is always available. The model still reads all supplied source text; quotation candidates are not a relevance filter. Source quotations are independently checked against the input. A malformed or invented citation is still rejected, even if the JSON schema was satisfied.
 
 Check readiness from a second terminal:
 
@@ -59,12 +62,24 @@ curl --fail http://127.0.0.1:8081/v1/models
 Optional launch settings:
 
 ```sh
-LOCAL_MODEL_CONTEXT=4096 LOCAL_MODEL_PORT=8082 sh scripts/serve_local_model.sh
+LOCAL_MODEL_CONTEXT=8192 LOCAL_MODEL_PORT=8082 sh scripts/serve_local_model.sh
 LLAMA_SERVER_BIN=/absolute/path/to/llama-server sh scripts/serve_local_model.sh
 LOCAL_MODEL_PATH=/absolute/path/to/verified-model.gguf sh scripts/serve_local_model.sh
 ```
 
-If memory pressure is high, close other applications or lower the context. If a prompt exceeds the configured context, reduce its source material or increase context within available memory. Update `BASE_URL` when changing the port. Custom model paths must point to the same verified artifact; the launcher itself checks file availability and does not repeat the 5GB checksum scan on every start.
+If memory pressure is high, close other applications or lower the context. Keep the application's `CONTEXT_TOKENS` equal to the runtime's `LOCAL_MODEL_CONTEXT`, and restart both processes after changing them. For the example above, set `CONTEXT_TOKENS=8192` and update `BASE_URL` to port 8082. Do not remove source material merely to force a verdict: ClaimLens can segment the document and will report a final-context overflow explicitly if too much evidence is selected. Custom model paths must point to the same verified artifact; the launcher itself checks file availability and does not repeat the 5GB checksum scan on every start.
+
+## Context planning and longer booklets
+
+The launcher defaults to `LOCAL_MODEL_CONTEXT=16384`. The matching application configuration is `CONTEXT_TOKENS=16384`; a fresh generic `.env.example` should be adjusted for the selected runtime. The budget includes the prompt and the final response, with 3,000 tokens reserved for final output and a safety margin.
+
+When the complete source does not fit, ClaimLens reads all of it in ordered segments. Apertus selects potentially relevant source-unit IDs, including counter-evidence and partial facts. Python reconstructs verbatim excerpts and the final model pass reasons jointly across them. Original PDF page IDs are retained. The application never combines chunk labels by voting.
+
+Where needed, the local planner calls llama.cpp's `/apply-template` and `/tokenize` endpoints on this same local origin to measure the rendered prompt. When those APIs are unavailable, it uses an explicitly identified conservative byte-based estimate. Neither method replaces provider-reported usage: results aggregate actual prompt/completion tokens over every inference pass, with context-only usage left `null`.
+
+The default total analysis limit is 1,800 seconds and 48 inference calls; individual local model requests have a 300-second timeout. An invalid extraction, exhausted budget or final evidence that will not fit is an explicit error. Every segment being examined does not guarantee that the model selects every relevant fact. The UI reports this coverage limitation with hierarchical results.
+
+The browser's model status uses the model catalog to check availability without running inference. If it says the runtime is unavailable, start `make model-serve`, wait for model loading to finish and refresh the status. Run `make evaluate` separately from browser claim checks on the single local inference slot.
 
 ## Pinned provenance
 

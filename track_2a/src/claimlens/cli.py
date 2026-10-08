@@ -74,6 +74,8 @@ def run_batch(input_path, output_path, settings, data_root=None, demo=False):
                 started = time.perf_counter()
                 case = json.loads(line)
                 proposal, claim, claim_language = prepare_case(case, data_root, cache)
+                for warning in proposal.get("warnings", []):
+                    print("ClaimLens source warning: " + warning, file=sys.stderr)
                 if case["id"] in seen_ids:
                     raise ValidationError("Input IDs must be unique.")
                 seen_ids.add(case["id"])

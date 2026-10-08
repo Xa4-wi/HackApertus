@@ -5,7 +5,7 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 MODEL_PATH=${LOCAL_MODEL_PATH:-"$REPOSITORY_ROOT/.cache/models/apertus-v1.5-8b-q4_k_m.gguf"}
-MODEL_CONTEXT=${LOCAL_MODEL_CONTEXT:-8192}
+MODEL_CONTEXT=${LOCAL_MODEL_CONTEXT:-16384}
 MODEL_PORT=${LOCAL_MODEL_PORT:-8081}
 MODEL_ALIAS=claimlens-apertus-v1.5-8b-q4
 
@@ -14,7 +14,7 @@ if [ "${1:-}" = "--help" ]; then
 Usage: scripts/serve_local_model.sh
 
 Serves the local Apertus v1.5 8B text GGUF at http://127.0.0.1:8081/v1.
-Environment: LLAMA_SERVER_BIN, LOCAL_MODEL_PATH, LOCAL_MODEL_CONTEXT (8192),
+Environment: LLAMA_SERVER_BIN, LOCAL_MODEL_PATH, LOCAL_MODEL_CONTEXT (16384),
              LOCAL_MODEL_PORT (8081).
 Prepare and verify weights first: python3 scripts/pull_local_model.py
 HELP

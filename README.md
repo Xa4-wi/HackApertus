@@ -1,70 +1,94 @@
 # ClaimLens
 
-See exactly where a claim departs from its evidence. A Python prototype for **Hack Apertus Track 2A — OST: Multilingual Natural Language Inference over Swiss Official Voting Booklets**.
+Check multilingual claims against Swiss voting booklets and follow the evidence back to the original PDF. **Version 2** is a local Python application for **Hack Apertus Track 2A — OST: Multilingual Natural Language Inference over Swiss Official Voting Booklets**.
 
-Select **Apertus v1.5 8B** (default), examine a claim, and trace each assessment to the original passage. This Mac is configured for local inference with a downloaded **Q4_K_M text conversion (5.06 GB)** of Apertus v1.5 8B. No API key is needed. A remote endpoint can also provide 70B. The included offline walkthrough uses one real French OST reference and four prewritten examples in German, French, and Italian; demo mode makes **no model calls**.
+The browser now offers a library of **60 official booklet PDFs**: 20 in each of German, French and Italian. Select a booklet and proposal, write a claim in any of those languages, and run **Apertus v1.5 8B** locally. You can also import a direct Federal Chancellery PDF link or upload a booklet. The result shows the NLI class, exact source quotations, original PDF pages, token usage, elapsed time and document coverage.
 
-## Try it locally
+## Start the presentation
+
+Run these in separate terminals from the repository root:
 
 ```bash
-# Terminal 1: serve the downloaded model (leave running)
+# Terminal 1: local Apertus with a 16,384-token context
 make model-serve
-# Terminal 2: start ClaimLens
+```
+
+```bash
+# Terminal 2: ClaimLens
 make dev
 ```
 
-Open **http://localhost:8000**, choose **Live Apertus**, then **Examine claim**. The local API is `http://127.0.0.1:8081/v1`; configuration is in the ignored `track_2a/.env`. This setup uses llama.cpp with Apple Metal because Docker Desktop is not installed. See [local model setup](track_2a/docs/local-model.md) for installation, provenance, and the 8,192-token context limit.
+Open **http://localhost:8000**. The model status shows whether the selected runtime is reachable. Choose **Voting booklets**, select the document and proposal, then choose **Live Apertus** and examine a claim. For an immediate offline explanation, select **Guided walkthrough** and **Demo**; those four answers are clearly labeled as prewritten examples.
 
-For the offline UI alone, `make dev` needs only Python 3.9+. Select demo mode to use stored answers without starting the model.
+This Mac uses llama.cpp with Apple Metal and a downloaded **5.06 GB Q4_K_M text conversion** of Apertus v1.5 8B. The API is `http://127.0.0.1:8081/v1`; no key is needed. Local configuration is in the ignored `track_2a/.env`. See [local model setup](track_2a/docs/local-model.md) and the [three-minute presentation walkthrough](track_2a/docs/presentation-walkthrough.md).
 
-The full OST dataset has also been saved locally: **1,488 rows**, all nine DE/FR/IT language combinations. Load it with `datasets.load_from_disk("track_2a/data/local/ost/dataset")`. Prediction inputs and gold labels are exported separately; see [data setup](track_2a/data/README.md).
+## What changed in V2
 
-The template's Docker entry point is:
+- **Booklet library:** Downloads the official PDFs referenced by the OST snapshot, caches their original bytes and extracted pages, and keeps source URL, language, content hash and proposal names. Imports do not call the model.
+- **Long documents:** Reads every supplied source segment, selects relevant exact excerpts and jointly assesses the claim across those excerpts. Smaller inputs use one model call. The UI explains which strategy ran.
+- **Scanned pages:** Uses local Poppler and Tesseract for bounded OCR when a PDF has little extractable text. OCR and unreadable-page warnings remain visible.
+- **Evaluation:** A repeatable development evaluation covers all nine language pairs and three labels, records failures, and reports accuracy, macro F1, usage and speed.
+- **Submission path:** Retains the official JSONL CLI and separate `linux/amd64` prediction image. The image contains application code and PDF/OCR tools; models, the downloaded dataset and gold labels stay outside it.
 
-```bash
-make run
-```
+The 1,488-row OST dataset is also saved locally, with prediction inputs and gold labels separated. Downloading this dataset did **not** train the model. See [data setup](track_2a/data/README.md).
 
-This builds the interactive demo image for `linux/amd64` and binds the UI to localhost. Docker must be installed and running. It was unavailable in the development environment, so the container build has not yet been executed.
+## Useful commands
+
+| Command | Purpose |
+| --- | --- |
+| `make dev` | Start the browser application on port 8000 |
+| `make model-serve` | Start the downloaded local model |
+| `make booklets` | Import/cache the official PDFs from the local OST snapshot |
+| `make ocr-setup` | Download and verify the three OCR language files |
+| `make demo` | Produce stored walkthrough predictions without inference |
+| `make evaluate-prepare` | Prepare 27 distinct development cases, one per language-pair/label combination |
+| `make evaluate` | Run/resume local inference and write `track_2a/output/v2-evaluation/summary.json` |
+| `make test` | Run unit and integration checks |
+| `make test-ui` | Check frontend interactions and API contracts |
+| `make run` | Build and start the interactive Docker image |
+| `make submission` | Build the separate official prediction image |
+| `make verify-submission` | Build and test Task A/B in the isolated submission container |
+| `make report` | Regenerate the PDF from recorded evaluation and verification artifacts |
+
+The library and dataset are already populated on this Mac. First-time setup and OCR prerequisites are described in [the Track 2A guide](track_2a/README.md). Evaluation makes real model calls; run it separately from a live presentation. Existing evaluation files are preserved, and resuming after code/model/input changes requires a new evaluation directory.
 
 ## Project guide
 
-The required `track_2a/` directory remains the project root; the top-level Makefile forwards commands into it. Your original idea brief is retained unchanged.
+The template's `track_2a/` directory remains the project root. The top-level Makefile forwards commands into it.
 
 ```text
 HackApertus/
-├── Hack_Apertus_Ideas_for_Codex.md   Original concept brief
 ├── Makefile                        Convenience commands
-├── LICENSE                         Template's Apache-2.0 license
+├── LICENSE                         Apache-2.0 license
 └── track_2a/
-    ├── README.md                   Setup and CLI examples
-    ├── technical_report.md         Architecture, validation, limitations
-    ├── Makefile / Dockerfile       Demo and submission targets
-    ├── requirements.txt            Pinned PDF parser
-    ├── requirements-data.txt       Optional dataset download dependencies
-    ├── .env.example                Model configuration; no credentials
+    ├── README.md                   Setup, configuration and official CLI
+    ├── technical_report.md         Method, validation and limitations
+    ├── Makefile / Dockerfile       Development and submission commands
+    ├── requirements*.txt           Runtime and optional dataset dependencies
     ├── src/claimlens/
-    │   ├── cli.py                  Official JSONL entry point
-    │   ├── booklets.py             Request validation and PDF pages
-    │   ├── engine.py               Claim assessment and quote validation
-    │   ├── llm.py                  Apertus endpoint adapter and prompt
-    │   ├── models.py               Labels, limits, application errors
-    │   ├── config.py               Environment configuration
-    │   ├── corpus.py               Attributed demo data
-    │   ├── server.py               Local HTTP interface
-    │   └── static/                 HTML, CSS, JavaScript interface
-    ├── scripts/                    Dataset download and local model setup
-    ├── data/                       Demo plus ignored local dataset snapshot
-    ├── tests/                      Offline unit and integration checks
-    └── docs/                       Verified event and API requirements
+    │   ├── cli.py                  Official JSONL input/output
+    │   ├── booklets.py / ocr.py     PDF extraction and bounded local OCR
+    │   ├── library.py              Cached booklet imports and provenance
+    │   ├── engine.py               Assessment and independent quote checks
+    │   ├── context.py              Full-source context planning and extraction
+    │   ├── llm.py                  Apertus transport, prompts and JSON schema
+    │   ├── config.py / runtime.py  Configuration and model availability
+    │   ├── models.py / corpus.py   Shared labels and walkthrough data
+    │   ├── server.py               Browser API
+    │   └── static/                 HTML, CSS and JavaScript interface
+    ├── scripts/                    Model/data/import/OCR/evaluation commands
+    ├── data/                       Walkthrough plus ignored local dataset/library
+    ├── output/                     Ignored predictions and evaluation records
+    ├── tests/                      Unit and integration checks
+    └── docs/                       Setup, presentation and event requirements
 ```
 
-Read [the setup guide](track_2a/README.md), [technical report](track_2a/technical_report.md), and [verified challenge requirements](track_2a/docs/event-requirements.md). There is no frontend build, vector database, or training infrastructure. Model weights and downloaded data stay in ignored local directories and outside the submission image.
+## What the results mean
 
-## Challenge alignment
+The labels are **0 entailment**, **1 neutral**, and **2 contradiction**, relative to the supplied source. Exact quotations establish provenance; they do not independently prove the model's interpretation. Reading every segment does not guarantee that evidence selection finds every relevant fact. OCR may introduce transcription errors. Context, time and call limits fail explicitly rather than silently dropping source text.
 
-The CLI accepts both full booklet PDFs (task A) and supplied reference passages (task B), with independent German/French/Italian source and claim languages. It emits the official classes **0 entailment, 1 neutral, 2 contradiction**, source-language quotes, and actual provider token counts plus measured case duration. Support for all nine language pairs is tested at the interface level; **model quality across those pairs is unmeasured**.
+Software tests verify behavior, not model accuracy. The development evaluation uses a small stratified sample of the published training split; it is not a held-out or official benchmark. The organizer's remote inference proxy still needs validation with organizer credentials. For current measured results and container checks, see [the technical report](track_2a/technical_report.md).
 
-The official submission deadline is **16 October 2026 at 12:00 CEST**. The final OST report must be a PDF of at most six pages. This repository currently contains a prototype and the report's Markdown source, not a completed submission. Sources: [OST API guide](https://hackapertus.notion.site/solution-api-guide-ef5b4fec112a834da43101ede56300f5), [event](https://hackapertus.ch/online-hack), [submission page](https://hackapertus.ch/online-hack/submissions).
+The official submission deadline is **16 October 2026 at 12:00 CEST**, with an OST report of at most six PDF pages. Sources: [OST API guide](https://hackapertus.notion.site/solution-api-guide-ef5b4fec112a834da43101ede56300f5), [event](https://hackapertus.ch/online-hack), and [submission page](https://hackapertus.ch/online-hack/submissions).
 
-Based on the [official template](https://github.com/HackApertus/project-template/tree/7f2382275461baf3fa6c8855d157d86abffe9f0e). Source code: Apache-2.0; project documentation: CC-BY-4.0. The imported OST sample retains its original license and attribution; see [data provenance](track_2a/data/README.md).
+Based on the [official template](https://github.com/HackApertus/project-template/tree/7f2382275461baf3fa6c8855d157d86abffe9f0e). Source code: Apache-2.0; project documentation: CC-BY-4.0. Imported data retains its original attribution and license; see [data provenance](track_2a/data/README.md).
