@@ -1,6 +1,7 @@
 """Page-preserving PDF extraction and official CLI request validation."""
 
 from pathlib import Path
+import time
 
 from .models import ValidationError
 from .ocr import ocr_pages
@@ -20,7 +21,7 @@ def language(value, field):
     return value
 
 
-def extract_pdf(path, source_language, *, metadata=None, allow_empty=False):
+def extract_pdf(path, source_language, *, metadata=None, allow_empty=False, deadline=None):
     """Preserve physical PDF pages, using bounded local OCR for scant text.
 
     The optional metadata dictionary receives coverage warnings. The returned
@@ -33,6 +34,11 @@ def extract_pdf(path, source_language, *, metadata=None, allow_empty=False):
     if not path.is_file() or path.stat().st_size > 25_000_000:
         raise ValidationError("Booklet must be an existing PDF no larger than 25 MB.")
     try:
+        def check_deadline():
+            if deadline is not None and time.monotonic() >= deadline:
+                raise ValidationError("PDF preparation exceeded the case time budget. No partial source was accepted.")
+
+        check_deadline()
         reader = PdfReader(path)
         if reader.is_encrypted:
             raise ValidationError("Encrypted PDFs are not supported.")
@@ -41,6 +47,7 @@ def extract_pdf(path, source_language, *, metadata=None, allow_empty=False):
             raise ValidationError("Prototype booklet limit: 200 PDF pages.")
         passages, total = [], 0
         for number, page in enumerate(reader.pages, start=1):
+            check_deadline()
             text = page.extract_text() or ""
             total += len(text)
             if total > 2_000_000:
@@ -55,7 +62,11 @@ def extract_pdf(path, source_language, *, metadata=None, allow_empty=False):
                  if len("".join(by_page.get(number, {}).get("text", "").split())) < 40]
         warnings, used_ocr = [], []
         if scant:
-            recognized, warnings = ocr_pages(path, scant, source_language)
+            check_deadline()
+            ocr_options = ({"timeout_seconds": max(0, deadline - time.monotonic())}
+                           if deadline is not None else {})
+            recognized, warnings = ocr_pages(path, scant, source_language, **ocr_options)
+            check_deadline()
             for number, text in recognized.items():
                 if number in scant and len(text.strip()) > len(by_page.get(number, {}).get("text", "").strip()):
                     by_page[number] = {"id": "page-{}".format(number), "page": number, "text": text,
@@ -80,6 +91,7 @@ def extract_pdf(path, source_language, *, metadata=None, allow_empty=False):
                              "incomplete_pages": incomplete})
         if not passages and not allow_empty:
             raise ValidationError("No readable text found. Local OCR is unavailable or could not recover text from this PDF.")
+        check_deadline()
         return passages
     except ValidationError:
         raise
@@ -87,34 +99,45 @@ def extract_pdf(path, source_language, *, metadata=None, allow_empty=False):
         raise ValidationError("Could not extract the booklet PDF. Check its format and text layer.") from None
 
 
-def prepare_case(case, data_root, pdf_cache=None):
-    """Translate either official task input into the shared engine contract."""
+def prepare_case(case, data_root, pdf_cache=None, *, deadline=None):
+    """Translate the presentation and annotated API inputs to the engine.
+
+    Language metadata is optional in the presentation. Absence means the
+    model reads the original multilingual text without a guessed language;
+    supplied metadata still has to use an official language code. Reference
+    tasks need no vote context because their supplied text is the only source.
+    """
     if not isinstance(case, dict):
         raise ValidationError("Each input line must be a JSON object.")
     require_text(case.get("id"), "id", 256)
-    vote = require_text(case.get("vote"), "vote", 2000)
     claim = case.get("claim")
     if not isinstance(claim, dict):
-        raise ValidationError("claim must be an object containing text and language.")
+        raise ValidationError("claim must be an object containing text and optional language.")
     claim_text = require_text(claim.get("text"), "claim.text", 2000)
-    claim_language = language(claim.get("language"), "claim.language")
+    claim_language = language(claim["language"], "claim.language") if "language" in claim else "auto"
     if ("booklet" in case) == ("reference" in case):
         raise ValidationError("Supply exactly one of booklet or reference.")
     kind = "booklet" if "booklet" in case else "reference"
     source = case[kind]
     if not isinstance(source, dict):
         raise ValidationError("{} must be an object.".format(kind))
-    source_language = language(source.get("language"), kind + ".language")
+    source_language = language(source["language"], kind + ".language") if "language" in source else "auto"
+    vote = require_text(case.get("vote"), "vote", 2000) if kind == "booklet" or "vote" in case else ""
     source_metadata = {}
     if kind == "reference":
         passages = [{"id": "reference-1", "text": require_text(source.get("text"), "reference.text"),
-                     "page": None, "title": vote, "url": "",
+                     "page": None, "title": vote or "Supplied reference", "url": "",
                      "attribution": "Supplied reference; retain the source's attribution",
                      "language": source_language}]
     else:
         supplied_path = require_text(source.get("path"), "booklet.path", 4096)
-        root = Path(data_root).resolve()
-        path = (root / supplied_path).resolve()
+        if "\x00" in supplied_path:
+            raise ValidationError("booklet.path must not contain null bytes.")
+        try:
+            root = Path(data_root).resolve()
+            path = (root / supplied_path).resolve()
+        except (OSError, ValueError, RuntimeError):
+            raise ValidationError("Could not resolve booklet.path inside the input data directory.") from None
         try:
             path.relative_to(root)
         except ValueError:
@@ -123,7 +146,8 @@ def prepare_case(case, data_root, pdf_cache=None):
         key = (str(path), source_language)
         if key not in cache:
             extracted_metadata = {}
-            extracted = extract_pdf(path, source_language, metadata=extracted_metadata)
+            options = {"deadline": deadline} if deadline is not None else {}
+            extracted = extract_pdf(path, source_language, metadata=extracted_metadata, **options)
             cache[key] = {"passages": extracted, "metadata": extracted_metadata}
         cached = cache[key]
         if isinstance(cached, dict):
@@ -131,5 +155,5 @@ def prepare_case(case, data_root, pdf_cache=None):
         else:
             passages = cached
     return ({"id": case["id"], "title": vote, "language": source_language,
-             "vote": vote, "passages": passages, "examples": [], "is_fixture": False,
+             "vote": vote, "passages": passages, "source_kind": kind, "examples": [], "is_fixture": False,
              **source_metadata}, claim_text, claim_language)

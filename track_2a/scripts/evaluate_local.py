@@ -108,6 +108,9 @@ def run_identity(inputs, settings):
             "document_timeout_seconds": getattr(settings, "document_timeout", None),
             "max_document_model_calls": getattr(settings, "max_document_model_calls", None),
             "context_tokens": getattr(settings, "context_tokens", None),
+            "document_strategy": settings.document_strategy,
+            "retrieval_prompt_tokens": settings.retrieval_prompt_tokens,
+            "retrieval_timeout_seconds": settings.retrieval_timeout,
             "input_sha256": hashlib.sha256(Path(inputs).read_bytes()).hexdigest()}
 
 

@@ -18,13 +18,17 @@ def ocr_pages(pdf_path, page_numbers, language, *, max_pages=20, timeout_seconds
     """Return OCR text keyed by original 1-based PDF page, plus safe warnings.
 
     Poppler and Tesseract must already be installed with the source language.
+    An unspecified language (``auto``) uses all three challenge languages in
+    one recognition pass; it does not guess a language from the PDF filename.
     Rendering is limited to 2,000 pixels on the longest side. Each command has
     a 30-second timeout within a shared deadline of at most 180 seconds.
     """
     warnings = []
     extracted = {}
-    if language not in LANGUAGES:
+    if language != "auto" and language not in LANGUAGES:
         return {}, ["OCR supports German, French, and Italian source documents."]
+    required_languages = tuple(LANGUAGES.values()) if language == "auto" else (LANGUAGES[language],)
+    recognition_languages = "+".join(required_languages)
     try:
         limit = min(20, max(0, int(max_pages)))
         seconds = float(timeout_seconds)
@@ -56,7 +60,8 @@ def ocr_pages(pdf_path, page_numbers, language, *, max_pages=20, timeout_seconds
     # Respect an explicitly configured Tesseract installation. Otherwise use
     # the project's checksum-pinned language data when available.
     tessdata = []
-    if "TESSDATA_PREFIX" not in os.environ and (LOCAL_TESSDATA / (LANGUAGES[language] + ".traineddata")).is_file():
+    if "TESSDATA_PREFIX" not in os.environ and all(
+            (LOCAL_TESSDATA / (code + ".traineddata")).is_file() for code in required_languages):
         tessdata = ["--tessdata-dir", str(LOCAL_TESSDATA)]
 
     def run(command, output=subprocess.DEVNULL):
@@ -75,8 +80,10 @@ def ocr_pages(pdf_path, page_numbers, language, *, max_pages=20, timeout_seconds
                     run([recognizer] + tessdata + ["--list-langs"], output)
                 with languages.open("rb") as output:
                     available = output.read(65536).decode("utf-8", errors="replace").splitlines()
-                if LANGUAGES[language] not in {line.strip() for line in available}:
-                    return {}, warnings + ["OCR language data for this document is unavailable."]
+                missing = sorted(set(required_languages) - {line.strip() for line in available})
+                if missing:
+                    return {}, warnings + ["OCR language data for this document is unavailable: {}.".format(
+                        ", ".join(missing))]
             except (OSError, subprocess.SubprocessError):
                 return {}, warnings + ["OCR could not check installed language data."]
             consumed = 0
@@ -92,7 +99,7 @@ def ocr_pages(pdf_path, page_numbers, language, *, max_pages=20, timeout_seconds
                          str(source), str(prefix)])
                     stage = "read text from"
                     run([recognizer, str(prefix.with_suffix(".png")), str(prefix)] + tessdata +
-                        ["-l", LANGUAGES[language], "txt"])
+                        ["-l", recognition_languages, "txt"])
                     remaining = MAX_TEXT_BYTES - consumed
                     with prefix.with_suffix(".txt").open("rb") as output:
                         raw = output.read(remaining + 1)

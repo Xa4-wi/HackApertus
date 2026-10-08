@@ -1,8 +1,9 @@
 """Claim checking orchestration and independently checked quote provenance."""
 
 import copy
+from dataclasses import replace
 
-from .context import analyze_document, processing_metadata
+from .context import analyze_document
 from .llm import request_completion
 from .models import (ALLOWED_MODELS, CLASSIFICATIONS, DIMENSIONS, LABELS,
                      MAX_CHECKS, MAX_CLAIM_LENGTH, MAX_CONTEXT_CHARACTERS,
@@ -89,17 +90,15 @@ def validate_model_result(claim, result, passages):
 
 
 def check_claim(proposal, claim, model, mode, settings, *, claim_language="auto"):
-    """Check a claim in explicit demo or live mode; no automatic provider use."""
+    """Assess supplied evidence through Apertus; stored answers are never used."""
     claim = _string(claim, "Claim", MAX_CLAIM_LENGTH)
     if model not in ALLOWED_MODELS:
         raise ValidationError("Select one of the configured Apertus models.")
-    # Demo callers may omit settings. A configured local alias must never
-    # silently serve an 8B model when the caller selected the canonical 70B.
-    if settings is not None:
-        settings.model_for_request(model)
-    served_model = None
-    if mode not in ("demo", "live"):
-        raise ValidationError("Mode must be demo or live.")
+    if settings is None or not settings.base_url:
+        raise ValidationError("Configure an Apertus endpoint before checking a claim.")
+    settings.model_for_request(model)
+    if mode != "live":
+        raise ValidationError("Only live Apertus inference is supported.")
     if claim_language not in ("auto", "de", "fr", "it"):
         raise ValidationError("Claim language must be auto, de, fr or it.")
     if not isinstance(proposal, dict) or not isinstance(proposal.get("passages"), list):
@@ -113,39 +112,29 @@ def check_claim(proposal, claim, model, mode, settings, *, claim_language="auto"
         if passage_id in seen_ids:
             raise ValidationError("Source passage IDs must be unique.")
         seen_ids.add(passage_id)
-    if mode == "demo":
-        example = next((item for item in proposal.get("examples", [])
-                        if item.get("claim") == claim), None)
-        if example is None:
-            raise ValidationError("Demo mode supports only the exact bundled example claims. Choose an example or configure live mode for a custom claim.")
-        result = validate_model_result(claim, copy.deepcopy(example["result"]), proposal["passages"])
-        result["warnings"].insert(0, "Prewritten demonstration: no model was called. The selected model is used only in live mode.")
-        passages = copy.deepcopy(proposal["passages"])
-        metrics = _unused_metrics(passages)
-        processing = processing_metadata(passages, settings, "demo", 0, 0)
-    else:
-        # Every supplied page is retained. Context planning can split long
-        # documents, but cannot lexically discard cross-language evidence.
-        passages = copy.deepcopy(proposal["passages"])
-        if sum(len(passage["text"]) for passage in passages) > MAX_CONTEXT_CHARACTERS:
-            raise ValidationError("The booklet exceeds the 300,000-character prototype context limit. The document was not truncated and no model was called.")
-        if not passages:
-            result = {"overall": "neutral",
-                      "summary": "No source passages were supplied. This does not establish whether the claim is true or false.",
-                      "checks": [_neutral_check(claim, "No evidence was supplied for this proposal.")],
-                      "validation_degraded": False,
-                      "warnings": ["No model was called because no source passages were supplied."]}
-            metrics = _unused_metrics(passages)
-            processing = processing_metadata(passages, settings, "empty", 0, 0)
-        else:
-            response, metrics, processing = analyze_document(
-                claim, passages, model, settings, claim_language,
-                proposal.get("vote", proposal.get("title", "")), request_completion)
-            served_model = settings.model_for_request(model)
-            result = validate_model_result(claim, response, passages)
-            result["warnings"].append("Exact quotes were checked against the source passages. Quote provenance does not independently verify the model's interpretation.")
-            if metrics["context_tokens"] is None:
-                result["warnings"].append("The endpoint does not report source-context token usage separately; context_tokens is null and context_characters is measured locally.")
+    passages = copy.deepcopy(proposal["passages"])
+    if sum(len(passage["text"]) for passage in passages) > MAX_CONTEXT_CHARACTERS:
+        raise ValidationError("The booklet exceeds the 300,000-character prototype context limit. The document was not truncated and no model was called.")
+    if not passages:
+        raise ValidationError("No readable source passages were supplied. Add a readable booklet before checking a claim.")
+    # Task B must retain the supplied reference as its whole source. Fast
+    # booklet retrieval does not change the reference-task inference contract.
+    inference_settings = (replace(settings, document_strategy="exhaustive")
+                          if proposal.get("source_kind") == "reference" else settings)
+    response, metrics, processing = analyze_document(
+        claim, passages, model, inference_settings, claim_language,
+        proposal.get("vote", proposal.get("title", "")), request_completion)
+    served_model = settings.model_for_request(model)
+    try:
+        result = validate_model_result(claim, response, passages)
+    except ValidationError as error:
+        error.metrics = metrics
+        raise
+    result["warnings"].append("Exact quotes were checked against the source passages. Quote provenance does not independently verify the model's interpretation.")
+    if processing.get("strategy") == "retrieval":
+        result["warnings"].append(processing["coverage"])
+    if metrics["context_tokens"] is None:
+        result["warnings"].append("The endpoint does not report source-context token usage separately; context_tokens is null and context_characters is measured locally.")
     if proposal.get("is_fixture"):
         result["warnings"].append("This proposal is a fictional fixture, not official voting material or an evaluation dataset.")
     result.update({"claim": claim, "model": model, "served_model": served_model,
@@ -154,10 +143,3 @@ def check_claim(proposal, claim, model, mode, settings, *, claim_language="auto"
                    "claim_language": claim_language, "metrics": metrics,
                    "processing": processing})
     return result
-
-
-def _unused_metrics(passages):
-    return {"input_tokens": 0, "output_tokens": 0, "context_tokens": 0,
-            "context_characters": sum(len(passage["text"]) for passage in passages),
-            "inference_seconds": 0.0, "inference_time_ms": 0.0,
-            "token_usage_source": "not_called"}

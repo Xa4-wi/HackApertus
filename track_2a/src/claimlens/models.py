@@ -25,6 +25,11 @@ class ProviderError(ClaimLensError):
 
     status_code = 502
 
+    def __init__(self, message, *, metrics=None, attempts=1):
+        super().__init__(message)
+        self.metrics = metrics
+        self.attempts = attempts
+
 
 def overall_label(checks):
     """Read the first, validated whole-claim check; do not combine subclaims."""

@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from claimlens.config import Settings, load_dotenv
-from claimlens.corpus import public_config
+from claimlens.config import public_config
 from claimlens.engine import check_claim
 from claimlens.llm import claim_spans, request_completion
 from claimlens.models import ALLOWED_MODELS, DEFAULT_MODEL, ValidationError
@@ -94,10 +94,9 @@ class LocalModelConfigurationTests(unittest.TestCase):
                                     "LOCAL_MODEL_ID": LOCAL_MODEL}, clear=True):
             settings = Settings.from_env()
         self.assertEqual(settings.base_url, "")
-        visible = public_config(settings, [PROPOSAL])
-        self.assertFalse(visible["live_ready"])
+        visible = public_config(settings)
         self.assertFalse(visible["local_model_configured"])
-        self.assertEqual([item["id"] for item in visible["models"]], list(ALLOWED_MODELS))
+        self.assertEqual(visible["model"]["id"], DEFAULT_MODEL)
 
     def test_dotenv_alias_preserves_inherited_value_and_is_literal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -127,12 +126,10 @@ class LocalModelConfigurationTests(unittest.TestCase):
 
     def test_public_local_config_lists_only_configured_canonical_model(self):
         settings = Settings(LOCAL_ENDPOINT, "synthetic-private-key", local_model_id=LOCAL_MODEL)
-        config = public_config(settings, [PROPOSAL])
-        self.assertEqual(len(config["models"]), 1)
-        self.assertEqual(config["models"][0]["id"], DEFAULT_MODEL)
-        self.assertIn("local", config["models"][0]["label"])
+        config = public_config(settings)
+        self.assertEqual(config["model"]["id"], DEFAULT_MODEL)
+        self.assertEqual(config["model"]["label"], "Apertus 1.5 8B")
         self.assertTrue(config["local_model_configured"])
-        self.assertTrue(config["live_ready"])  # Configured, not a runtime health probe.
         visible = json.dumps(config)
         self.assertNotIn("synthetic-private-key", visible)
         self.assertNotIn(LOCAL_ENDPOINT, visible)
@@ -143,8 +140,8 @@ class LocalModelConfigurationTests(unittest.TestCase):
             with self.subTest(timeout=timeout):
                 settings = Settings(LOCAL_ENDPOINT, "synthetic-private-key", timeout=timeout,
                                     local_model_id=LOCAL_MODEL)
-                config = public_config(settings, [PROPOSAL])
-                self.assertEqual(config["request_timeout_seconds"], timeout + 10)
+                config = public_config(settings)
+                self.assertEqual(config["request_timeout_seconds"], min(settings.document_timeout, settings.retrieval_timeout) + 10)
                 self.assertNotIn("synthetic-private-key", json.dumps(config))
                 self.assertNotIn(LOCAL_ENDPOINT, json.dumps(config))
 
@@ -158,7 +155,7 @@ class LocalModelTransportTests(unittest.TestCase):
             request = opener.return_value.open.call_args.args[0]
         self.assertEqual(request.full_url, LOCAL_ENDPOINT + "/chat/completions")
         self.assertEqual(json.loads(request.data)["model"], LOCAL_MODEL)
-        self.assertEqual(request.get_header("User-agent"), "ClaimLens/0.1")
+        self.assertEqual(request.get_header("User-agent"), "ClaimLens/0.4")
 
     def test_local_transport_constrains_shape_and_claim_length_during_decoding(self):
         settings = Settings(LOCAL_ENDPOINT, local_model_id=LOCAL_MODEL)
@@ -171,40 +168,13 @@ class LocalModelTransportTests(unittest.TestCase):
         self.assertEqual(output["type"], "json_schema")
         self.assertTrue(output["json_schema"]["strict"])
         schema = output["json_schema"]["schema"]
-        self.assertEqual(set(schema["required"]), {"summary", "checks"})
+        self.assertEqual(set(schema["required"]), {"explanation", "relation", "evidence"})
         self.assertFalse(schema["additionalProperties"])
-        variants = schema["properties"]["checks"]["anyOf"]
-        self.assertEqual(len(variants), 4)
-        for count, variant in enumerate(variants, start=1):
-            self.assertEqual((variant["minItems"], variant["maxItems"]), (count, count))
-            self.assertEqual(len(variant["items"]), count)
-            self.assertEqual(variant["items"][0], {"$ref": "#/definitions/whole_claim"})
-            self.assertTrue(all(item == {"$ref": "#/definitions/diagnostic"} for item in variant["items"][1:]))
-            self.assertFalse(variant["additionalItems"])
-            self.assertNotIn("prefixItems", variant)
-        for kind in ("whole_claim", "diagnostic"):
-            checks = schema["definitions"][kind]["anyOf"]
-            self.assertEqual({check["properties"]["label"]["const"] for check in checks},
-                             {"entailment", "neutral", "contradiction"})
-            for check in checks:
-                self.assertFalse(check["additionalProperties"])
-                self.assertEqual(set(check["required"]), {"text", "dimension", "label", "explanation", "evidence"})
-                properties = check["properties"]
-                label = properties["label"]["const"]
-                self.assertEqual(properties["evidence"]["minItems"], 0 if label == "neutral" else 1)
-                self.assertEqual(properties["evidence"]["items"], {"$ref": "#/definitions/citation"})
-                if kind == "whole_claim":
-                    self.assertEqual(properties["text"], {"type": "string", "const": CLAIM})
-                    self.assertEqual(properties["dimension"], {"type": "string", "const": "general"})
-                else:
-                    allowed_text = properties["text"]["enum"]
-                    self.assertIn(CLAIM, allowed_text)
-                    self.assertIn("200 Franken.", allowed_text)
-                    self.assertTrue(all(text and text in CLAIM for text in allowed_text))
-                    self.assertNotIn("nachdem", allowed_text)
-                    self.assertEqual(set(properties["dimension"]["enum"]),
-                                     {"general", "amount", "date", "scope", "qualifier", "attribution"})
-        citations = schema["definitions"]["citation"]["anyOf"]
+        self.assertEqual(set(schema["properties"]["relation"]["enum"]),
+                         {"supported", "not_enough_information", "refuted"})
+        self.assertLess(list(schema["properties"]).index("explanation"),
+                        list(schema["properties"]).index("relation"))
+        citations = schema["properties"]["evidence"]["items"]["anyOf"]
         self.assertEqual(len(citations), 2)
         originals = {passage["id"]: passage["text"] for passage in passages}
         for citation in citations:
@@ -216,6 +186,18 @@ class LocalModelTransportTests(unittest.TestCase):
             self.assertTrue(all(quote in originals[passage_id] for quote in quotes))
             self.assertFalse(citation["additionalProperties"])
 
+    def test_source_relations_map_to_official_labels_and_exact_whole_claim(self):
+        settings = Settings(LOCAL_ENDPOINT, local_model_id=LOCAL_MODEL)
+        for relation, label in (("supported", 0), ("not_enough_information", 1), ("refuted", 2)):
+            model_result = {"explanation": "Synthetic comparison.", "relation": relation,
+                            "evidence": [] if label == 1 else [{"passage_id": "p1", "quote": CLAIM}]}
+            with self.subTest(relation=relation), patch("claimlens.llm.build_opener") as opener:
+                opener.return_value.open.return_value = response(model_result)
+                result = check_claim(PROPOSAL, CLAIM, DEFAULT_MODEL, "live", settings)
+            self.assertEqual(result["classification"], label)
+            self.assertEqual(result["checks"][0]["text"], CLAIM)
+            self.assertFalse(result["validation_degraded"])
+
     def test_allowed_claim_spans_preserve_punctuation_and_original_whitespace(self):
         claim = "  Die  jährliche,\tGebühr\nbeträgt CHF 200.  "
         spans = claim_spans(claim)
@@ -226,6 +208,23 @@ class LocalModelTransportTests(unittest.TestCase):
         self.assertNotIn("jährliche, Gebühr", spans)
         self.assertTrue(all(span and span in claim for span in spans))
         self.assertEqual(len(spans), len(set(spans)))
+
+    def test_json_only_exact_string_quotes_bind_only_to_a_unique_source(self):
+        settings = Settings("http://localhost:9000/v1")
+        compact = {"explanation": "The fee matches.", "relation": "supported", "evidence": [CLAIM]}
+        with patch("claimlens.llm.build_opener") as opener:
+            opener.return_value.open.return_value = response(compact)
+            result = check_claim(PROPOSAL, CLAIM, DEFAULT_MODEL, "live", settings)
+        self.assertFalse(result["validation_degraded"])
+        self.assertEqual(result["checks"][0]["evidence"], [{"passage_id": "p1", "quote": CLAIM}])
+
+        for evidence, passages in (([CLAIM.replace("200", "300")], [PASSAGE]),
+                                   ([CLAIM], [PASSAGE, {**PASSAGE, "id": "p2"}]),
+                                   ([{"passage_id": "invented", "quote": CLAIM}], [PASSAGE])):
+            with self.subTest(evidence=evidence), patch("claimlens.llm.build_opener") as opener:
+                opener.return_value.open.return_value = response({**compact, "evidence": evidence})
+                rejected = check_claim({"passages": passages}, CLAIM, DEFAULT_MODEL, "live", settings)
+            self.assertTrue(rejected["validation_degraded"])
 
     def test_long_claim_is_available_whole_while_diagnostic_phrases_are_bounded(self):
         words = ["word{}".format(index) for index in range(14)]
@@ -311,11 +310,7 @@ class LocalModelTransportTests(unittest.TestCase):
         self.assertEqual(result["served_model"], LOCAL_MODEL)
         self.assertEqual(result["classification"], 0)
         self.assertEqual(result["metrics"]["input_tokens"], 30)
-        for proposal, mode in ((PROPOSAL, "demo"), ({"passages": []}, "live")):
-            with self.subTest(mode=mode), patch("claimlens.engine.request_completion") as completion:
-                result = check_claim(proposal, CLAIM, DEFAULT_MODEL, mode, settings)
-                self.assertIsNone(result["served_model"])
-                completion.assert_not_called()
+
 
 
 if __name__ == "__main__":

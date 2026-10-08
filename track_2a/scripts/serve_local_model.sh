@@ -7,6 +7,7 @@ REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 MODEL_PATH=${LOCAL_MODEL_PATH:-"$REPOSITORY_ROOT/.cache/models/apertus-v1.5-8b-q4_k_m.gguf"}
 MODEL_CONTEXT=${LOCAL_MODEL_CONTEXT:-16384}
 MODEL_PORT=${LOCAL_MODEL_PORT:-8081}
+MODEL_CACHE_MB=${LOCAL_MODEL_CACHE_MB:-1024}
 MODEL_ALIAS=claimlens-apertus-v1.5-8b-q4
 
 if [ "${1:-}" = "--help" ]; then
@@ -15,7 +16,7 @@ Usage: scripts/serve_local_model.sh
 
 Serves the local Apertus v1.5 8B text GGUF at http://127.0.0.1:8081/v1.
 Environment: LLAMA_SERVER_BIN, LOCAL_MODEL_PATH, LOCAL_MODEL_CONTEXT (16384),
-             LOCAL_MODEL_PORT (8081).
+             LOCAL_MODEL_PORT (8081), LOCAL_MODEL_CACHE_MB (1024).
 Prepare and verify weights first: python3 scripts/pull_local_model.py
 HELP
     exit 0
@@ -30,6 +31,9 @@ case "$MODEL_CONTEXT" in
 esac
 case "$MODEL_PORT" in
     ''|*[!0-9]*) printf '%s\n' 'LOCAL_MODEL_PORT must be an integer between 1 and 65535.' >&2; exit 2 ;;
+esac
+case "$MODEL_CACHE_MB" in
+    ''|*[!0-9]*) printf '%s\n' 'LOCAL_MODEL_CACHE_MB must be a nonnegative integer.' >&2; exit 2 ;;
 esac
 if [ "$MODEL_CONTEXT" -lt 1 ] || [ "$MODEL_PORT" -lt 1 ] || [ "$MODEL_PORT" -gt 65535 ]; then
     printf '%s\n' 'Context must be positive and port must be between 1 and 65535.' >&2
@@ -63,6 +67,7 @@ exec "$LLAMA_SERVER_BIN" \
     --alias "$MODEL_ALIAS" \
     --ctx-size "$MODEL_CONTEXT" \
     --parallel 1 \
+    --cache-ram "$MODEL_CACHE_MB" \
     --no-context-shift \
     --reasoning off \
     --cors-origins http://127.0.0.1:8000,http://localhost:8000 \

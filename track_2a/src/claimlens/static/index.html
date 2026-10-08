@@ -1,126 +1,84 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#f6f5ef">
-    <meta name="description" content="ClaimLens: explore the evidence behind a claim, one phrase at a time.">
-    <title>ClaimLens · Trace the claim</title>
-    <link rel="stylesheet" href="/static/styles.css">
-    <script src="/static/app.js" defer></script>
-  </head>
-  <body>
-    <header class="site-header">
-      <a class="brand" href="/" aria-label="ClaimLens home"><span class="brand-mark" aria-hidden="true"></span>ClaimLens<span class="brand-period">.</span></a>
-      <div class="header-context"><span>HACK APERTUS</span><span class="header-divider"></span><span>TRACK 2A · OST</span></div>
-      <span class="prototype-badge"><span class="status-dot"></span>Research prototype</span>
-    </header>
-
-    <main>
-      <section class="intro" aria-labelledby="page-title">
-        <div class="intro-copy">
-          <p class="eyebrow">A CLOSER LOOK AT THE CLAIM</p>
-          <h1 id="page-title">The claim is only<br>half the story.</h1>
-          <p class="intro-description">Find the words the evidence supports.<br>See exactly where the rest departs from the source.</p>
-        </div>
-        <div class="method-card" aria-label="How ClaimLens works">
-          <span class="method-label">FROM STATEMENT TO SOURCE</span>
-          <ol class="method-steps">
-            <li><span>01</span><div><strong>Separate the claim</strong><p>Amounts, dates, scope, and qualifications.</p></div></li>
-            <li><span>02</span><div><strong>Compare the evidence</strong><p>Look for support and contradiction.</p></div></li>
-            <li><span>03</span><div><strong>Keep the source in view</strong><p>Every finding comes with a traceable passage.</p></div></li>
-          </ol>
-        </div>
-      </section>
-
-      <div id="connection-error" class="notice error-notice" role="alert" hidden></div>
-
-      <section class="runtime-bar" aria-label="Model connection">
-        <div class="runtime-indicator" id="runtime-indicator" data-state="checking"><span class="runtime-dot" aria-hidden="true"></span><div><strong id="runtime-title">Connecting to Apertus</strong><p id="runtime-message" role="status">Checking the configured model runtime…</p></div></div>
-        <div class="runtime-actions"><span id="runtime-context" class="runtime-context"></span><button id="refresh-runtime" type="button" class="text-button">Refresh status ↻</button></div>
-      </section>
-
-      <section class="workspace" aria-label="Claim review workspace">
-        <div class="analysis-column">
-          <section class="library-card" aria-labelledby="library-title">
-            <div class="section-heading"><div><p class="eyebrow">START WITH THE SOURCE</p><h2 id="library-title">Your evidence library</h2></div><span class="step-number" aria-hidden="true">01</span></div>
-            <div class="source-switch" role="group" aria-label="Evidence source type"><button id="library-source" type="button" aria-pressed="false">Voting booklets <span id="library-count">0</span></button><button id="demo-source" type="button" aria-pressed="true">Guided walkthrough</button></div>
-
-            <div id="library-source-panel" hidden>
-              <div class="library-select-row"><div class="field"><label for="document-select">Booklet</label><select id="document-select" disabled><option>No booklets imported yet</option></select></div><button id="refresh-library" type="button" class="text-button" aria-label="Refresh booklet library">Refresh ↻</button></div>
-              <div id="document-details" class="document-details"></div>
-              <p id="library-error" class="form-error" role="alert" hidden></p>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f6fa">
+  <meta name="description" content="Check claims against Swiss voting booklets using local Apertus.">
+  <title>ClaimLens · Booklet review</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#claim">Skip to claim</a>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="ClaimLens home"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect width="32" height="32" rx="9" fill="currentColor"/><path d="M10 9H8v14h2m12-14h2v14h-2M13 12h6m-6 4h6m-6 4h4" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>ClaimLens<span class="brand-divider"></span><span class="brand-context">Booklet review</span></a>
+    <span class="header-tag">Hack Apertus <span>· Track 2A</span></span>
+  </header>
+  <main>
+    <div class="page-heading"><div><p class="eyebrow">SWISS VOTING BOOKLETS</p><h1>Check a claim. Review the source.</h1><p>Compare a German, French or Italian claim with an official voting booklet.</p></div><span class="local-badge"><span class="status-dot"></span>Local inference</span></div>
+    <p id="connection-error" class="notice error-notice" role="alert" hidden></p>
+    <section class="workspace" aria-label="Claim workspace">
+      <aside class="source-column">
+        <section class="panel library-panel" aria-labelledby="library-title">
+          <div class="panel-heading"><h2 id="library-title"><span class="step-number">1</span>Choose a booklet</h2><button id="refresh-library" class="icon-button" type="button" aria-label="Refresh booklet library" title="Refresh library">↻</button></div>
+          <div class="library-filters"><label class="search-field"><span class="sr-only">Search booklets</span><input id="booklet-search" type="search" placeholder="Search date or title…" autocomplete="off" disabled></label><label><span class="sr-only">Filter booklet language</span><select id="source-language" aria-label="Filter booklet language" disabled><option value="all">All languages</option><option value="de">German</option><option value="fr">French</option><option value="it">Italian</option></select></label></div>
+          <div class="library-caption"><span id="library-count" role="status">Loading library…</span><span>PDF sources</span></div>
+          <div id="document-list" class="document-list" role="group" aria-label="Available booklets"><p class="library-empty">Loading saved booklets…</p></div>
+          <p id="library-error" class="form-error" role="alert" hidden></p>
+          <div id="document-details" class="document-details"></div>
+          <details id="import-panel" class="import-panel"><summary><span aria-hidden="true">＋</span>Add a booklet</summary>
+            <div class="import-body">
+              <div class="import-switch" role="group" aria-label="Import method"><button id="url-method" type="button" aria-pressed="true">Official link</button><button id="upload-method" type="button" aria-pressed="false">Upload PDF</button></div>
+              <form id="import-form">
+                <div id="url-import-field" class="field"><label for="booklet-url">PDF URL</label><input id="booklet-url" type="url" placeholder="https://www.bk.admin.ch/…" autocomplete="off" required><p class="field-help">Direct PDF link from bk.admin.ch.</p></div>
+                <div id="pdf-import-field" class="field" hidden><label for="booklet-file">PDF file</label><input id="booklet-file" type="file" accept="application/pdf,.pdf"><p class="field-help">Up to 25 MB. Scanned pages use local OCR when available.</p></div>
+                <div class="field"><label for="booklet-language">Document language</label><select id="booklet-language"><option value="de">German</option><option value="fr">French</option><option value="it">Italian</option></select></div>
+                <div class="field"><label for="booklet-title">Title <span class="optional">optional</span></label><input id="booklet-title" type="text" maxlength="300" placeholder="Ballot date or booklet title"></div>
+                <div class="field"><label for="booklet-vote">Proposal <span class="optional">optional</span></label><input id="booklet-vote" type="text" maxlength="500" placeholder="Proposal name"></div>
+                <button id="import-button" class="secondary-button" type="submit">Add to library</button>
+                <p id="import-status" class="field-help" role="status">PDFs are saved locally for reuse.</p><p id="import-error" class="form-error" role="alert" hidden></p>
+              </form>
             </div>
-            <div id="demo-source-panel"><div class="field"><label for="proposal">Walkthrough evidence set</label><select id="proposal" name="proposal" disabled><option>Loading evidence sets…</option></select></div><p id="proposal-description" class="field-help"></p></div>
-
-            <details class="import-panel" id="import-panel">
-              <summary><span class="import-plus" aria-hidden="true">+</span>Add a voting booklet<span class="import-summary-help">Official link or PDF</span></summary>
-              <div class="import-body">
-                <p class="import-description">Add a Swiss voting booklet to the local library. Original page numbers stay attached to its passages.</p>
-                <div class="import-switch" role="group" aria-label="Import method"><button id="url-method" type="button" aria-pressed="true">Official URL</button><button id="upload-method" type="button" aria-pressed="false">Upload PDF</button></div>
-                <form id="import-form">
-                  <div id="url-import-field" class="field"><label for="booklet-url">Official booklet URL</label><input id="booklet-url" type="url" placeholder="https://www.bk.admin.ch/…/booklet.pdf" autocomplete="off"><p class="field-help">Use a direct PDF link hosted on bk.admin.ch.</p></div>
-                  <div id="pdf-import-field" class="field" hidden><label for="booklet-file">PDF file</label><input id="booklet-file" type="file" accept="application/pdf,.pdf"><p class="field-help">Select a text-based PDF. Scanned pages may need OCR before import.</p></div>
-                  <div class="import-fields"><div class="field"><label for="booklet-language">Booklet language</label><select id="booklet-language"><option value="de">German</option><option value="fr">French</option><option value="it">Italian</option></select></div><div class="field"><label for="booklet-title">Title / ballot date <span class="optional">optional</span></label><input id="booklet-title" type="text" maxlength="300" placeholder="Voting booklet · 27 September 2026"></div></div>
-                  <div class="field import-vote-field"><label for="booklet-vote">Proposal name <span class="optional">optional</span></label><input id="booklet-vote" type="text" maxlength="500" placeholder="The proposal you want to examine"></div>
-                  <div class="import-footer"><p id="import-status" class="import-status" role="status">Importing a document does not run the model.</p><button id="import-button" class="secondary-button" type="submit">Add to library <span aria-hidden="true">↗</span></button></div>
-                  <p id="import-error" class="form-error" role="alert" hidden></p>
-                </form>
-              </div>
-            </details>
-          </section>
-
-          <section class="input-card" aria-labelledby="input-title">
-            <div class="section-heading"><div><p class="eyebrow">ASK A PRECISE QUESTION</p><h2 id="input-title" tabindex="-1">What does the evidence say?</h2></div><span class="step-number" aria-hidden="true">02</span></div>
-            <form id="claim-form">
-              <div class="form-row">
-                <div class="field vote-field" id="vote-field"><label for="vote">Proposal being checked</label><input id="vote" name="vote" type="text" list="vote-options" maxlength="500" placeholder="Enter the proposal’s name" disabled><datalist id="vote-options"></datalist></div>
-                <div class="field model-field"><label for="model">Apertus model</label><select id="model" name="model" disabled><option>Loading models…</option></select></div>
-              </div>
-              <p id="vote-help" class="field-help">A booklet can cover several proposals. Name the one your claim concerns.</p>
-
-              <div class="claim-label"><label for="claim">The claim to examine</label><div class="claim-language-field"><label for="claim-language">Language</label><select id="claim-language" name="claim_language" aria-label="Claim language"><option value="auto">Auto-detect</option><option value="de">German</option><option value="fr">French</option><option value="it">Italian</option></select></div></div>
-              <textarea id="claim" name="claim" rows="4" maxlength="2000" placeholder="Enter a claim about the selected proposal…" required disabled></textarea>
-              <div class="examples-row"><div id="examples" class="example-list" aria-label="Example claims"></div><span id="character-count">0 / 2,000</span></div>
-
-              <fieldset class="mode-fieldset"><legend>Run mode</legend><div class="run-mode">
-                <label class="mode-option"><input type="radio" name="mode" value="demo" id="demo-mode" checked><span><strong>Demo</strong><small>No model call</small></span></label>
-                <label class="mode-option" id="live-option"><input type="radio" name="mode" value="live" id="live-mode" disabled><span><strong>Live Apertus</strong><small id="live-mode-status">Checking connection</small></span></label>
-              </div></fieldset>
-              <p id="mode-description" class="mode-description">The demo is a fixed walkthrough of the example claims. It does not run a model.</p>
-              <div class="form-footer"><span class="source-scope"><span class="small-square" aria-hidden="true"></span>Grounded in the selected evidence</span><button type="submit" class="primary-button" id="check-button" disabled><span id="check-button-label">Examine claim</span><span aria-hidden="true">↗</span></button></div>
-              <div id="check-progress" class="check-progress" role="status" hidden><span class="progress-spinner" aria-hidden="true"></span><div><strong id="check-progress-title">Reading the source</strong><p id="check-progress-detail">Waiting for the model response…</p></div><span id="check-elapsed">0s</span></div>
-              <p id="form-error" class="form-error" role="alert" hidden></p>
-            </form>
-          </section>
-
-          <section id="results" class="results-card" aria-labelledby="results-title" hidden>
-            <div class="section-heading result-heading"><div><p class="eyebrow">READ BETWEEN THE WORDS</p><h2 id="results-title" tabindex="-1">A closer look</h2></div><button id="download-button" class="text-button" type="button">Download JSON <span aria-hidden="true">↓</span></button></div>
-            <div class="result-meta"><span id="overall-label" class="verdict"></span><span id="result-run" class="run-badge"></span></div>
-            <p id="result-summary" class="result-summary"></p>
-            <div id="result-processing" class="result-processing" hidden></div>
-            <div id="result-metrics" class="result-metrics" aria-label="Inference metrics" hidden></div>
-            <div id="result-warnings" class="result-warnings"></div>
-            <div class="claim-review"><p class="small-label">YOUR CLAIM · SELECT A HIGHLIGHT TO TRACE IT</p><p id="highlighted-claim" class="highlighted-claim"></p></div>
-            <div class="checks-header"><h3>Part-by-part review</h3><span id="check-count"></span></div>
-            <div id="checks" class="checks-list"></div>
-            <p class="result-footnote">These findings describe the selected evidence. “Unresolved” means the evidence is insufficient; it does not mean the claim is false. Challenge classes: 0 = entailment, 1 = neutral, 2 = contradiction.</p>
-          </section>
-        </div>
-
-        <aside class="evidence-column" aria-labelledby="evidence-title">
-          <div class="evidence-topline"><span class="eyebrow">THE OTHER HALF</span><span id="evidence-count" class="count-badge">SOURCE TRAIL</span></div>
-          <h2 id="evidence-title">Follow the evidence.</h2>
-          <p id="evidence-subtitle" class="evidence-description">The original words, kept close to the finding.</p>
-          <div id="evidence-content">
-            <div class="evidence-placeholder"><div class="document-icon" aria-hidden="true"><span></span><span></span><span></span></div><h3>A source for every finding.</h3><p>Choose a booklet or try the walkthrough. Examine a claim, then select a highlighted phrase to follow its original evidence.</p></div>
-          </div>
-          <div class="evidence-key"><p class="small-label">HOW TO READ A FINDING</p><ul><li><span class="legend-dot support-dot"></span><strong>Supported</strong><span>The evidence agrees.</span></li><li><span class="legend-dot contradiction-dot"></span><strong>Contradicted</strong><span>The evidence differs.</span></li><li><span class="legend-dot neutral-dot"></span><strong>Unresolved</strong><span>More evidence is needed.</span></li></ul></div>
-          <div id="corpus-note" class="corpus-note" hidden></div>
-        </aside>
-      </section>
-    </main>
-
-    <footer class="site-footer"><p><strong>ClaimLens.</strong> Evidence before conclusions.</p><span>Built for exploration · Hack Apertus Track 2A</span></footer>
-  </body>
+          </details>
+        </section>
+        <section class="panel model-panel" aria-label="Local model">
+          <div class="model-heading"><span class="model-icon" aria-hidden="true">A</span><div><strong id="model-name">Apertus 1.5</strong><span>Runs on your computer</span></div><button id="refresh-runtime" type="button" class="icon-button" aria-label="Refresh model status" title="Refresh model status">↻</button></div>
+          <div id="runtime-indicator" class="runtime-status" data-state="checking"><span class="status-dot"></span><strong id="runtime-title">Checking connection</strong><span id="runtime-context"></span></div>
+          <p id="runtime-message" class="field-help" role="status">Checking the local model…</p>
+          <div id="runtime-setup" class="runtime-setup" hidden><p>Start Apertus in a terminal, then refresh its status.</p><code>make model-serve</code><p id="runtime-config-help" hidden>Configure the local endpoint and model alias in <code>track_2a/.env</code>.</p></div>
+        </section>
+      </aside>
+      <div class="claim-column">
+        <section class="panel claim-panel" aria-labelledby="input-title">
+          <div class="panel-heading"><h2 id="input-title" tabindex="-1"><span class="step-number">2</span>Enter your claim</h2><span class="quiet-tag">DE / FR / IT</span></div>
+          <div id="selected-source" class="selected-source">Select a booklet from the library to begin.</div>
+          <form id="claim-form">
+            <div class="form-row"><div class="field proposal-field"><label for="vote">Proposal in this booklet</label><input id="vote" type="text" list="vote-options" maxlength="500" placeholder="Enter or choose a proposal" required disabled><datalist id="vote-options"></datalist><p class="field-help">A booklet may cover more than one vote.</p></div><div class="field language-field"><label for="claim-language">Claim language</label><select id="claim-language" disabled><option value="de">German</option><option value="fr">French</option><option value="it">Italian</option></select></div></div>
+            <div class="field claim-field"><label for="claim">Claim to check</label><textarea id="claim" rows="5" maxlength="2000" placeholder="Write a specific statement about the selected proposal…" required disabled></textarea><div class="claim-help"><span>The claim and booklet can use different languages.</span><span id="character-count">0 / 2,000</span></div></div>
+            <div class="form-footer"><p id="check-hint">Apertus must be running to check a claim.</p><button type="submit" class="primary-button" id="check-button" disabled><span id="check-button-label">Check claim</span><span aria-hidden="true">→</span></button></div>
+            <div id="check-progress" class="check-progress" role="status" hidden><span class="progress-spinner" aria-hidden="true"></span><div><strong id="check-progress-title">Checking the claim with Apertus</strong><p id="check-progress-description">Keep this page open while the model checks the source.</p></div><span id="check-elapsed">0s</span></div>
+            <p id="form-error" class="form-error" role="alert" hidden></p>
+          </form>
+        </section>
+        <section id="empty-result" class="empty-result" aria-label="About your result">
+          <svg width="42" height="42" viewBox="0 0 42 42" fill="none" aria-hidden="true"><path d="M12 5h14l7 7v24H12V5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M26 5v8h7M17 19h11M17 24h8M17 29h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <div><h2>Your review will appear here</h2><p>Apertus returns a verdict with quoted evidence and links to the original PDF pages.</p></div>
+          <div class="outcome-key"><span><i class="legend-dot support-dot"></i>Supported</span><span><i class="legend-dot contradiction-dot"></i>Contradicted</span><span><i class="legend-dot neutral-dot"></i>Unresolved</span></div>
+          <p class="review-note">Research prototype. Verify the model’s interpretation against the source.</p>
+        </section>
+      </div>
+    </section>
+    <section id="results" class="result-section" aria-labelledby="results-title" hidden>
+      <div class="results-heading"><div><p class="eyebrow">MODEL ASSESSMENT</p><h2 id="results-title" tabindex="-1">Review the result</h2></div><button id="download-button" type="button" class="secondary-button">Export JSON <span aria-hidden="true">↓</span></button></div>
+      <div class="panel result-overview"><div class="result-meta"><span id="overall-label" class="verdict"></span><span id="result-run" class="quiet-tag"></span><span id="result-strategy" class="quiet-tag" hidden></span><span id="result-source" class="result-source"></span></div><p id="result-validation-warning" class="validation-warning" role="status" hidden>Some model findings failed citation validation. Review the unresolved findings and source notes.</p><p id="result-coverage" class="coverage-note" role="status" hidden></p><p id="result-summary" class="result-summary"></p><div id="result-metrics" class="result-metrics"></div><p class="review-note">This is the model’s assessment of the selected source, not a verified fact. Exact quotations can still be misinterpreted.</p></div>
+      <div class="result-grid">
+        <section class="panel analysis-panel" aria-labelledby="analysis-title"><div class="panel-heading"><h3 id="analysis-title">Claim analysis</h3><span id="check-count" class="quiet-tag"></span></div><p class="field-help">Select a finding to see its evidence.</p><p id="highlighted-claim" class="highlighted-claim"></p><div id="checks" class="checks-list"></div></section>
+        <aside class="panel evidence-panel" aria-labelledby="evidence-title"><div class="panel-heading"><h3 id="evidence-title" tabindex="-1">Source evidence</h3><span id="evidence-count" class="quiet-tag"></span></div><p id="evidence-subtitle" class="field-help">Original quotations for the selected finding.</p><div id="evidence-content"></div></aside>
+      </div>
+      <details id="technical-details" class="panel technical-details"><summary>Processing details &amp; source notes</summary><div id="result-processing"></div><div id="result-warnings"></div></details>
+    </section>
+  </main>
+  <footer class="site-footer"><span>ClaimLens <span class="footer-version">0.3</span></span><span>Research prototype · OST multilingual claim checking</span></footer>
+</body>
 </html>

@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .booklets import require_text
-from .corpus import find_proposal, load_corpus, public_config
+from .config import public_config
 from .engine import check_claim
 from .library import BookletLibrary
 from .models import ClaimLensError, ValidationError
@@ -18,7 +18,6 @@ ASSETS = {"/": ("index.html", "text/html"), "/static/styles.css": ("styles.css",
 
 
 def create_server(settings, host="127.0.0.1", port=8000, library=None):
-    proposals = load_corpus()
     library = library if library is not None else BookletLibrary()
     inference_lock = threading.Lock()
 
@@ -63,20 +62,25 @@ def create_server(settings, host="127.0.0.1", port=8000, library=None):
             path = urlsplit(self.path).path
             try:
                 if path == "/api/config":
-                    config = public_config(settings, proposals)
+                    config = public_config(settings)
                     config["documents"] = library.list_documents()
-                    config["version"] = "0.2"
+                    config["version"] = "0.3"
                     config["request_timeout_seconds"] = getattr(settings, "document_timeout", settings.timeout) + 10
                     self.respond(200, config)
                 elif path == "/api/library":
                     self.respond(200, {"documents": library.list_documents()})
                 elif path == "/api/model/status":
-                    self.respond(200, model_status(settings))
+                    if settings.local_model_configured:
+                        self.respond(200, model_status(settings))
+                    else:
+                        self.respond(200, {"configured": False, "reachable": False, "local": False,
+                                          "model": settings.model, "context_tokens": None,
+                                          "message": "Configure local Apertus to use the browser application."})
                 elif path.startswith("/api/booklets/") and path.endswith("/pdf"):
                     document_id = path[len("/api/booklets/"):-len("/pdf")]
                     self.respond(200, library.pdf_path(document_id).read_bytes(), "application/pdf")
                 elif path == "/health":
-                    self.respond(200, {"status": "ok", "version": "0.2"})
+                    self.respond(200, {"status": "ok", "version": "0.3"})
                 elif path in ASSETS:
                     filename, mime = ASSETS[path]
                     self.respond(200, (STATIC / filename).read_bytes(), mime)
@@ -125,21 +129,19 @@ def create_server(settings, host="127.0.0.1", port=8000, library=None):
                         request.get("url"), request.get("language"),
                         title=request.get("title", ""), vote=request.get("vote", ""))})
                     return
-                if request.get("document_id"):
-                    if request.get("proposal_id"):
-                        raise ValidationError("Select one booklet or one walkthrough source.")
-                    if request.get("mode") != "live":
-                        raise ValidationError("Imported booklets require Live Apertus.")
-                    vote = require_text(request.get("vote"), "Proposal name", 2000)
-                    proposal = library.get_proposal(request["document_id"], vote=vote)
-                else:
-                    proposal = find_proposal(proposals, request.get("proposal_id"))
+                if request.get("mode", "live") != "live" or request.get("proposal_id"):
+                    raise ValidationError("Only live checks against an imported booklet are supported.")
+                if not settings.local_model_configured:
+                    raise ValidationError("Configure local Apertus before checking a claim in the browser.")
+                document_id = require_text(request.get("document_id"), "Booklet ID", 200)
+                vote = require_text(request.get("vote"), "Proposal name", 2000)
+                proposal = library.get_proposal(document_id, vote=vote)
                 if not inference_lock.acquire(blocking=False):
                     self.respond(409, {"error": "A claim check is already running. Wait for it to finish before submitting another."})
                     return
                 try:
                     result = check_claim(proposal, request.get("claim"), request.get("model", settings.model),
-                                         request.get("mode", "demo"), settings,
+                                         "live", settings,
                                          claim_language=request.get("claim_language", "auto"))
                 finally:
                     inference_lock.release()

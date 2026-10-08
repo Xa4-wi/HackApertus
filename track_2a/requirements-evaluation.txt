@@ -1,0 +1,4 @@
+# Development-only dependencies for the official HackApertus starter evaluator.
+# Keep these out of the CPU inference/submission image.
+rapidfuzz==3.13.0
+scikit-learn==1.6.1

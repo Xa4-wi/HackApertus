@@ -1,124 +1,124 @@
-# Technical report — ClaimLens V2
+# Technical report — ClaimLens v0.4
 
 - **Track:** Track 2A — OST: Multilingual Natural Language Inference over Swiss Official Voting Booklets
 - **Event:** Hack Apertus Online, 1–16 October 2026
-- **Team:** To be completed by the submitting team
-- **Demo:** Local web app, `make dev` or Docker `make run`
-- **Status:** Development prototype, 8 October 2026. Software verification, the repeated 27-case development evaluation, and the full-booklet browser check completed. Model-quality failures remain documented below.
+- **Team / member:** OneLegedCoder - Xavier
+- **Interfaces:** Official JSONL CLI; local browser application
+- **Report date:** 8 October 2026
+- **Status:** Software checks, development scoring and both final reference cohorts completed. The full-booklet rerun was intentionally stopped at the user's request for latency redesign after one of nine cases produced an accepted output; no Task A score is reported. The final image rebuild and PDF regeneration remain pending. Organizer-proxy access and the private benchmark have not been tested.
 
 ## 1. Summary
 
-ClaimLens connects a source-relative NLI verdict to the exact claim words and source passages behind it. V2 adds a persistent official-booklet library, URL and PDF imports, bounded local OCR, and context-aware analysis of full documents. The CLI implements OST's task A (booklet) and task B (supplied reference) contract; the web app adds highlighted explanations, original PDF page links, runtime status, coverage and usage metrics.
+ClaimLens assesses whether a supplied Swiss voting booklet or reference supports a natural-language claim. It returns **0 entailment, 1 neutral, or 2 contradiction**, with exact evidence quotations, physical PDF page numbers and measured inference usage. German, French and Italian source/claim combinations are supported independently.
 
-Local development uses an Apertus v1.5 8B text-backbone quantization. The interface also retains a clearly labeled, prewritten walkthrough that makes no model call. Working imports, exact quotations and software tests establish useful behavior; they do not establish general prediction accuracy.
+Version 0.4 accepts both the minimal presentation inputs and the annotated starter inputs, adds bounded recovery with honest token accounting, and introduces frozen public-data evaluation using the official scorer. The local model prompt and decoding schema were revised to address the previous tendency to treat missing evidence as contradiction. These changes require measured validation; they do not establish benchmark success by themselves. The browser and CLI use live Apertus inference. No stored-answer or demo mode remains.
 
-## 2. Architecture and source handling
+## 2. Architecture and input/output contract
 
-```mermaid
-flowchart LR
-    A[Official JSONL CLI] --> C[Validate claim, proposal and languages]
-    B[Web app: library or walkthrough] --> C
-    D[Official URL or PDF upload] --> E[Cached PDF, pages and bounded OCR]
-    E --> C
-    C --> F[Context planning: full source or all segments]
-    F --> G[Apertus assessment over source evidence]
-    G --> H[Validate spans, exact quotes and whole-claim label]
-    H --> I[Official CLI output or source-linked UI result]
-```
-
-The Python modules have distinct responsibilities: `library.py` manages original PDFs and metadata; `booklets.py` extracts page text; `context.py` plans document analysis; `llm.py` implements model transport and structured output; `engine.py` checks results; `cli.py` preserves the official schema. A static HTML/CSS/JavaScript frontend uses the local HTTP API.
-
-Web imports accept HTTPS PDF links on exactly `bk.admin.ch` or `www.bk.admin.ch`, or a raw uploaded PDF. Redirects are validated. Content hashes and language determine stable document IDs; repeated imports reuse stored bytes and preserve proposal titles. Imports do not run Apertus. The submitted predictor reads supplied inputs and local PDFs; it does not fetch booklets, models or dependencies during evaluation.
-
-Physical, one-based PDF page positions remain intact, including blank pages. Pages with fewer than 40 non-whitespace text characters are candidates for local Poppler/Tesseract OCR. Each extraction attempts at most 20 candidate pages within a shared 180-second budget. OCR replaces text only when it recovers more than the existing scant text layer. Page-specific warnings remain visible. An exact match to an OCR transcription is not proof of an exact match to the visual PDF.
-
-### Context and claim reasoning
-
-When the source fits the configured context, the final assessment receives all supplied source text. Otherwise, ordered segments cover the entire source. Apertus selects potentially relevant source-unit IDs, including counter-evidence; Python reconstructs verbatim excerpts; a final pass reasons jointly over those excerpts. The application does not vote over segment labels. Original source IDs and page positions survive consolidation.
-
-The planner reserves output tokens and a safety margin. It can count a rendered prompt through the same local runtime's `/apply-template` and `/tokenize` APIs; otherwise it records a conservative byte-based planning estimate. These estimates never replace measured usage. Exhausted context, call or time budgets produce explicit errors rather than silent truncation. Processing every segment does not guarantee that every relevant fact reaches the final pass; the UI states this limitation.
-
-The first check must assess the entire claim and determines its label: **0 entailment, 1 neutral, 2 contradiction**. Additional checks explain amounts, dates, scope, qualifications or attribution. They are not mechanically combined, which would mishandle disjunctions and conditionals. Code derives offsets from exact claim substrings and validates quotations against original passages. Citation failures become visible unresolved checks in the UI and are rejected by the submission exporter. Structural failures reject the response. This validates provenance, not semantic correctness.
-
-## 3. Apertus and runtime
-
-The canonical model is `swiss-ai/Apertus-v1.5-8B`; the application also supports the official 70B ID when the endpoint supplies it. Local development uses a community Q4_K_M conversion of the 8B text backbone, **5,059,027,136 bytes**, with verified SHA256 and pinned revision. It is an unofficial derivative rather than the original multimodal checkpoint. [Local model provenance](docs/local-model.md) records the artifact.
-
-The tested setup is llama.cpp on an Apple M4 with 16GiB RAM, Metal offload, a **16,384-token combined input/output context**, and one inference slot. The local alias is `claimlens-apertus-v1.5-8b-q4`. `LOCAL_MODEL_ID` applies only to allowlisted local endpoint hosts. Organizer-injected `BASE_URL` and `API_KEY` take precedence; remote calls retain canonical Apertus model IDs. Results distinguish the canonical model from the served alias.
-
-Requests use temperature 0, up to 3,000 final-output tokens, and up to 1,600 output tokens for extraction passes. Local constrained decoding requires one whole-claim check, with up to three diagnostic checks, and restricts spans and quotations to source-derived candidates. Remote proxies use JSON-object mode. The prompt treats source text as data, requests supporting and conflicting evidence, and distinguishes attributed arguments or forecasts from established facts. No fine-tuning, external judge, browsing or shell tools are used by the model.
-
-Development limits are 300 seconds per model request, 1,800 seconds per document and 48 model calls per document. The browser allows the configured document budget plus a margin. Runtime health checks query availability without running inference; a healthy endpoint is not a quality assessment.
-
-## 4. Data and imported collection
-
-The pinned [OST dataset](https://huggingface.co/datasets/OSTswiss/MNLIoverSwissVotingBooklets), revision `fc2b27600310778da6bbf445651ddbca22d86269`, contains **1,488 training rows**: 495 entailment, 498 neutral and 495 contradiction. All nine DE/FR/IT source/claim-language combinations occur. There are 1,153 unique requests and 335 duplicate rows, with no conflicting duplicate labels. The local snapshot, unlabeled inference inputs and gold labels are stored separately under ignored `data/local/ost/` paths. Labels are not sent to the model.
-
-The imported collection comprises every unique booklet URL referenced by that prepared dataset, not the entire historical archive:
-
-| Measure | Verified collection |
+| Stage | Responsibility |
 | --- | --- |
-| Official PDFs | **60:** 20 German, 20 French, 20 Italian |
-| Original PDF pages | **3,408** |
-| Original PDF bytes | 75,993,354 |
-| Extracted text characters | 6,144,888, including whitespace |
-| Pages with recovered OCR text | **22 across 10 documents** |
-| Failed imports / rejected source rows | 0 / 0 |
+| CLI / local browser | Validate inputs; select the supplied reference or booklet |
+| `booklets.py`, `ocr.py`, `library.py` | Preserve original PDFs, page text, source attribution and bounded OCR |
+| `context.py`, `llm.py` | Plan context, select evidence when needed, call Apertus and account for usage |
+| `engine.py`, `cli.py` | Validate whole-claim output and exact quotations; export the official schema |
 
-These counts exclude temporary verification fixtures and user uploads. Some pages still have little readable text; warnings identify them. See [library provenance and OCR setup](docs/library.md).
+The template's `track_2a/` structure is retained. A static HTML/CSS/JavaScript interface calls the Python server. Its searchable library, claim form and source-linked results require the configured local model. The independent CLI can use the organizer's remote endpoint and does not require the browser server.
 
-The bundled walkthrough uses a French reference about the 3 March 2024 retirement initiative, one original dataset claim/label, and three authored variations. Its explanations are prewritten. The source dataset declares MIT; booklets remain attributed to the Federal Chancellery. The submission image excludes walkthrough answers and gold labels.
+The CLI accepts `--input` and `--output` UTF-8 JSONL files. Each request has a unique string ID, a claim object and exactly one `booklet` or `reference` object. Language fields may be omitted, as in the presentation; supplied codes must be `de`, `fr` or `it`. Missing metadata uses automatic multilingual handling without changing the source text. Reference cases may omit `vote`; booklet cases require it to identify the intended proposal. PDF paths must remain inside the mounted input directory. Missing source-language metadata enables all three OCR languages.
 
-## 5. Verification and evaluation
+Each output contains `id`, `label`, matching `label_name`, `evidence: [{page, text}]`, and `metrics: {input_tokens, output_tokens, inference_time_ms}`. PDF evidence uses one-based physical pages, preserving blank-page positions; reference evidence uses a null page. Neutral exports contain no evidence. A single whole-claim assessment determines the label. Python preserves the exact submitted claim and constructs its full-span check rather than requiring the model to copy it. The exporter retains at most five evidence items. Exact quotation validation checks provenance, not semantic correctness.
 
-### Software and end-to-end checks
+Web imports accept uploaded PDFs or validated HTTPS Federal Chancellery PDF URLs. Content hashes preserve originals and deduplicate imports. Imports make no model call. Evaluation reads supplied files and performs no online booklet, dependency or model download. Poppler/Tesseract OCR targets pages with fewer than 40 non-whitespace characters, attempts at most 20 pages within 180 seconds, and retains warnings. OCR transcription is not independently verified against visual content.
 
-| Check | Completed observation |
+### Context handling and recovery
+
+Sources that fit are supplied in full. Larger sources are divided into contiguous segments covering every character. Apertus selects source-unit IDs from each segment; Python reconstructs exact excerpts; a final assessment reasons jointly over those excerpts. There is no vote over segment labels. Selection can still miss relevant facts despite examining every segment.
+
+If selected evidence exceeds the final context, Apertus reconsiders every candidate in fitting windows and selects a smaller set of original source units, preserving their IDs and page provenance. This bounded reduction permits at most eight rounds within the same time and call budgets. It can omit relevant evidence; exact quotations do not eliminate that risk. Processing metadata records the rounds and initial/final selection counts. No-progress and fixed-capacity failures are not retried as whole-document analyses.
+
+Local planning can use the runtime's chat-template/tokenizer APIs. Remote planning uses a conservative byte-based estimate and only calls the configured chat-completions API. Estimates never replace measured usage. Context overflow, invalid extraction and exhausted budgets fail explicitly rather than silently truncate source text.
+
+Transport permits at most three attempts for recoverable HTTP or JSON failures within one request deadline and the remaining document call budget. A malformed verdict or citation can receive one additional assessment when prior usage is known. Failed attempts count toward tokens, time and call limits. Ambiguous network/server failures leave usage unknown; mandatory unknown metrics prevent official export rather than becoming estimates or zero usage. Explicitly rejected rate-limit requests count as zero unless the provider reports usage. Late responses are rejected while retaining known usage.
+
+JSON syntax and duplicate IDs are checked before inference. A failed case is reported individually and does not stop later cases. Successful predictions are atomically checkpointed to `OUTPUT.partial.jsonl`. The requested output is replaced only when every case succeeds; otherwise the CLI exits nonzero and preserves any previous complete output. Partial files are recovery artifacts, not complete submissions. Infrastructure failures are never fabricated neutral predictions.
+
+## 3. Model and runtime
+
+The canonical selection is `swiss-ai/Apertus-v1.5-8B`; the 70B ID is also supported when available at the endpoint. Local measurements use the pinned community Q4_K_M text-backbone conversion, **5,059,027,136 bytes**, served by llama.cpp on an Apple M4 with 16 GiB RAM, Metal offload, one slot and a **16,384-token combined context**. This is an unofficial derivative, not the full original multimodal checkpoint. Artifact revision and verified SHA256 are in [local model provenance](docs/local-model.md).
+
+Temperature is zero; final responses reserve up to 3,000 tokens and extraction responses up to 1,600. Local limits are 300 seconds per request, 1,800 seconds per case and 48 model calls, including retries. Context-only usage is null when unreported; source characters are measured separately. Case timing includes source preparation, inference and validation; PDF extraction is cached within a batch.
+
+The revised prompt distinguishes an incompatible fact about the same entity/time/condition from an unmentioned or unrelated fact. Synthetic illustrations explain the classes without evaluation answers. The model returns a compact object with `explanation`, `relation` and `evidence`. Explanation comes first; the relation is exactly one of `supported`, `not_enough_information` or `refuted`. Python maps these to official labels **0, 1 and 2**, respectively, and constructs the exact whole-claim check. The model no longer generates copied claim text, dimensions or diagnostic subchecks. Local constrained decoding restricts quotation candidates to exact source spans; independent validation still requires evidence for non-neutral labels.
+
+Remote proxies use JSON-object mode. If such a response supplies evidence as bare quote strings, the adapter binds a string only when it occurs verbatim in exactly one source passage. Ambiguous or invented quotations remain invalid, and supplied wrong passage IDs are never repaired. A local JSON-only protocol smoke test exercised this path successfully; the actual organizer proxy remains untested.
+
+Injected `BASE_URL` and `API_KEY` override local settings and aliases. A local served-model alias applies only to allowlisted local hosts; remote requests use the canonical model ID. No additional remote model, external judge, fine-tuning, model browsing or shell tool is used. The CPU `linux/amd64` image includes Python and PDF/OCR dependencies; it excludes credentials, model weights, downloaded datasets and gold labels. Inference is supplied through the endpoint.
+
+## 4. Data and evaluation method
+
+The pinned [OST dataset](https://huggingface.co/datasets/OSTswiss/MNLIoverSwissVotingBooklets), revision `fc2b27600310778da6bbf445651ddbca22d86269`, contains **1,488 public training rows**: 495 entailment, 498 neutral and 495 contradiction. There are 1,153 unique requests and 335 duplicates, without conflicting duplicate labels. The cache includes all 60 distinct referenced PDFs—20 per language—with 3,408 physical pages and 22 pages of recovered OCR text across 10 documents. It is the dataset's collection, not the complete historical archive.
+
+The v0.4 split was frozen before final inference, with seed `claimlens-v4-readiness-20261008`. It groups all languages and proposals from a ballot publication date together. The 14 dates exercised by earlier development cases or the known 3 March 2024 booklet smoke remain development-only; six other dates supply final cohorts. Identical requests are deduplicated. Final PDF cases exclude normalized same-language claims selected for the reference cohorts.
+
+| Frozen cohort | Cases | Purpose |
+| --- | --- | --- |
+| Development B | 27 | One case per language pair and label; tuning permitted |
+| Final B | 27 | One case per language pair and label from separate dates |
+| Final B extension | 27 | Second preselected case per stratum; not a replacement chosen after scoring |
+| Final A | 9 | One full-booklet case per language pair, three cases per label |
+
+Gold labels are used only for stratified selection and scoring. The inference runner receives cases alone and uses the CLI's `predict_case` path. Input/PDF/gold hashes, dataset identity, model/settings/code identity and the unmodified official evaluator snapshot are recorded. Interrupted runs are retained; changed source identity requires fresh results. The official scorer measures label metrics and Task A evidence overlap; separate records retain failures, usage and wall-clock mean/p95. Evidence overlap does not validate page numbers or establish semantic correctness.
+
+These are small **public-data local holdouts**, not the organizers' private benchmark. Pretraining exposure cannot be excluded. Final A and B remain correlated through shared dates despite excluding repeated claims. Task A retains upstream reference-task labels, following official preparation; a complete booklet can contain facts absent from the shorter reference. Local thresholds do not reproduce the organizer proxy's efficiency ranking.
+
+## 5. Measurements and verification
+
+| Check / cohort | Observed status |
 | --- | --- |
-| Unit/integration suite | **125 tests passed**, plus the frontend smoke harness. Coverage includes both CLI tasks, nine language pairs, provenance, PDF/OCR, imports, runtime configuration, context budgets and token aggregation. Test inference is stubbed. |
-| Real browser | Isolated headless Chrome inspected at 1440×1050 and 390×844. Actual library selection, cached official import, synthetic PDF upload/download and offline demo passed, with no page errors or horizontal overflow. The temporary upload was removed. Earlier hierarchical-layout screenshots used marked mocks; the final live booklet screenshots contain an actual model response. |
-| Docker | `linux/amd64` image build and **two task A/B integration checks** passed with a read-only root and no external network. Inference was mocked; this does not verify the organizer's endpoint. |
-| OCR fixture | A separate image-only French PDF recovered text on physical page 2 while preserving the blank first-page warning. The fixture was not retained in the official library. |
-| Revised full-booklet browser check | **Semantic failure:** the French 3 March 2024 booklet and German changed-number claim (`67 Jahre`, `100 %`) produced entailment (0), although pages 6/21/22 establish 66 years by 2033 and 80%. All 32 source pages were processed in two segments and three model calls: **24,820 input / 559 output tokens; 179.69 seconds**. The exact cited text passed provenance checks but did not justify the verdict. |
+| Current Python suite | **181 tests passed**; includes input compatibility, provenance, evidence reduction, retry accounting and budgets. Inference is stubbed in software tests. |
+| Frontend | **Smoke harness passed**; verifies interface behavior, not model accuracy. |
+| Submission container | **2 integration + 11 compatibility + 17 resilience checks passed**. The final image rebuild after the API quote-adapter change remains pending. |
+| v0.4 development B, 27 cases | **25/27 correct (92.59%), macro-F1 0.9275; 27 accepted, zero failures**. Mean **17.83 s**, p95 **30.66 s**; **65,065 input / 3,303 output tokens**, all cases measured. |
+| Local JSON-only API protocol | **Passed** one synthetic cross-language case: correct entailment, **514 input / 60 output tokens**, **3.15 s**. This is local protocol validation, not organizer access or a benchmark. |
+| v0.4 final B, primary 27 | **26/27 correct (96.30%), macro-F1 0.9628; zero failures**. Mean **15.55 s**. |
+| v0.4 final B, extension 27 | **24/27 correct (88.89%), macro-F1 0.8866; zero failures**. Mean **16.15 s**. |
+| v0.4 final B, combined 54 | **50/54 correct (92.59%), macro-F1 0.9247; 54 accepted, zero failures**. Mean **15.85 s**, p95 **27.74 s**; **119,486 input / 7,069 output tokens**, all cases measured. |
+| v0.4 final A, 9 PDF cases | **Intentionally stopped; incomplete and unscored.** One accepted output took **458.53 s**, **62,050 input / 661 output tokens**, **six calls** and **one reduction round**. The following case was interrupted with incomplete usage. |
+| Organizer inference proxy | **Not tested**; requires organizer credentials |
+| Organizer private benchmark | **Not available / not tested** |
 
-Recorded artifacts are in `output/v2-qa/`, `output/v2-smoke/` and their verification logs. Mocked screenshot values are not model measurements. The final browser response is preserved unchanged, including its incorrect label. It cited a page-22 footnote and headings ending with retirement at 67 in 2043, while the body explains 80% and page 21 states 66 by 2033. The response even mentioned those differences in its summary while labeling the claim supported. This demonstrates a reasoning and evidence-selection failure that structural JSON and exact-quote checks cannot detect. An earlier smoke result is retained separately; its correct class with a weak citation is not substituted for the final result.
+The completed development run used the frozen development inputs and the unmodified official scorer. All nine neutral examples were classified correctly; one entailment and one contradiction were classified as neutral. Its score exceeds the local Task B threshold on the tuning cohort only and predates the final API quote-adapter change. Measurements are recorded in `output/v4-readiness/development/summary.json` and `local-api-protocol-smoke.json`.
 
-### Task B development sample
+Both final reference cohorts exceed the official scorer's 0.70 Task B threshold on these public-data cases. **All 18 neutral examples were correct**. Independent audits verified all 34 emitted quotations as exact matches to their references, with no interface or provenance issues; this does not prove semantic relevance. Combined macro-F1 was recomputed by the unmodified official scorer over all 54 predictions, not averaged from cohort F1 values. Both runs have identical code/model/runtime identity apart from their input hashes. `final-b-combined/` contains scoring-only concatenations, the exact combined score **0.9247219355578489**, timing/usage summaries and source-artifact hashes; the original cohorts remain unchanged.
 
-Preparation deterministically selects **27 distinct requests**, one per label for each of the nine source/claim-language combinations. Gold labels are used for stratification and separate scoring. This is a small sample of the published training split, **not held-out evaluation**. Prompt/schema changes were informed by its observed failures, and the revised run repeats these same 27 requests. Any revised score therefore measures performance on a tuned development set.
+Earlier v0.4 development runs and partial attempts were exploratory and informed prompt/schema revisions; their artifacts remain preserved. An initial final-B run was interrupted after four cases to address a separate synthetic JSON-only protocol issue. Neither final predictions nor final gold were read to choose that compatibility fix. The records and source remain under `final-b/interrupted-api-hardening/` and are excluded from final scores.
 
-| Run | Correct / all cases | Accepted | Failures | Macro-F1 including failures |
-| --- | --- | --- | --- | --- |
-| Recorded baseline | **15/27 (55.56%)** | 19 | 8 | **0.5456** |
-| Revised local schema | **18/27 (66.67%)** | 27 | 0 | **0.5556** |
+The first Task A attempt failed when selected evidence exceeded the final context. Its six calls consumed **75,230 input / 728 output tokens** over **321.84 seconds**, including a redundant full-analysis retry; a following in-flight case was interrupted with unknown usage. These records and the old source remain under `final-a/interrupted-context-overflow/`. No Task A gold was inspected to choose the capacity fix. A rerun began after bounded reduction and non-retryable capacity failures were added. Completed Task B measurements use the preceding source snapshot: the successful full-source inference path, prompt and schema are unchanged by this long-document fix.
 
-The baseline's eight failures were rejected structural/claim/citation outputs, not substituted neutral predictions. Four accepted classifications were incorrect. Its recorded mean case duration was 26.93 seconds, with 69,932 input and 6,549 output tokens across the 27 recorded cases. Baseline artifacts and the source snapshot remain in `output/v2-evaluation-baseline/`.
+The user intentionally stopped that Task A rerun to focus on latency after **one of nine cases produced an accepted output**. Its recorded elapsed time was **458,532.384 ms**, with **62,050 input / 661 output tokens**, **six model calls** and **one evidence-reduction round**. That output has not been scored for correctness. The following in-flight case was interrupted with incomplete usage. All original records are preserved. The nine-case cohort is incomplete, so neither Task A F1 nor overall evaluation readiness is established.
 
-The completed revised run accepted all 27 outputs. Every language pair had two correct predictions out of three. All nine entailment and nine contradiction examples were correct; **all nine neutral examples were incorrectly classified as contradiction**. Per-class F1 was 1.000 entailment, 0.000 neutral and 0.667 contradiction. The schema removed observed format failures but did not solve the distinction between missing evidence and explicit incompatibility. This is the principal model-quality issue to address next.
+The historical V2 tuned 27-case reference run accepted all outputs and classified **18/27 correctly (66.67%; macro-F1 0.5556)**. All nine neutral cases were incorrectly classified as contradiction. It averaged 24.11 seconds per case and recorded 69,932 input / 6,742 output tokens. It used different development cases from the current run, so this comparison is not a paired measurement of the code change. The original report is preserved at `output/v4-readiness/technical-report-v2.md`, with results under `output/v2-evaluation/`.
 
-The revised run averaged **24.11 seconds per case**, with **69,932 input and 6,742 output tokens**; usage was returned for all 27 cases. Completed records, run identity and the confusion matrix are in `output/v2-evaluation/`. Timings are observations on this local quantized runtime, not controlled throughput comparisons. The small, tuned sample does not establish the public Task B macro-F1 target of 0.70 on unseen cases.
+A historical full-booklet smoke also mislabeled a changed-number German claim as entailment against the French March 2024 booklet, despite exact quotations passing validation. That response remains in `output/v2-smoke/`. It demonstrates why valid JSON, exact quotes and software checks are insufficient evidence of model quality.
 
-The local evaluator counts failures against accuracy and F1 and records per-language-pair results, confusion and usage. It checks exact source presence, **not semantic citation relevance or the official task A evidence-overlap score**. No official task A overlap evaluation or organizer-proxy inference test has been completed. The published task targets are requirements, not achieved claims.
+Published macro-F1 targets are **0.70 for Task B** and **0.60 for Task A**. Pending results must not be interpreted as meeting either target. Final reporting must include every frozen case and failure, rather than only favorable examples. Token totals must identify cases whose complete usage was unavailable.
 
-Provider-reported prompt/completion tokens are summed across inference passes. Missing mandatory token usage prevents official export rather than being estimated. Context-only usage remains null when unreported; source characters are recorded separately. Elapsed timings include the relevant application work. Demo records must be excluded from model evaluation.
+## 6. Reproduction, limitations and submission status
 
-## 6. Limitations and reproducibility
+`make model-serve` starts the local model; `make dev` starts the live browser. `make test` and `make test-ui` run software checks. `make submission` builds the predictor; `make verify-submission` checks its isolated CLI contract. `make check-endpoint` exercises a synthetic language-free case through the real CLI, reporting connectivity/schema behavior separately from classification correctness. It is not an accuracy benchmark.
 
-Exact quotations can still be misinterpreted, and hierarchical selection can omit relevant evidence despite reading all segments. OCR, column order, hyphenation and repeated spans remain failure sources. OCR is triggered by scant selectable text; a scanned body with a selectable header may escape that heuristic. PDF parsing runs in-process before OCR limits, so compressed file size does not bound parser resource use. Identical claim phrases resolve to their first occurrence. Checks are capped at 300,000 source characters, PDFs at 25 MB and 200 physical pages, and claims at 2,000 characters; an imported document may exceed the inference cap and then fail explicitly. The local web server is a single-user prototype without deployment authentication or service scaling.
+Frozen v0.4 inputs and provenance are under `output/v4-readiness/`. Run or score a cohort from `track_2a/` using `scripts/evaluate_readiness.py run|score --directory output/v4-readiness/COHORT`; scoring requires `requirements-evaluation.txt`. Resume only an unchanged run identity and keep gold outside prediction mounts. `make report` builds the current Markdown report as `output/pdf/claimlens-v4-report.pdf` and enforces the six-page limit; inspect every rendered page after final edits. Old `make evaluate` commands and the explicit `make report-v2` remain historical V2 workflows; their artifacts must not be relabeled as current measurements.
 
-From `track_2a/`, run `make test`, `make test-ui` and `make demo` for software/offline checks. `make model-serve` starts the local model; `make dev` starts the UI. `make dataset`, `make booklets` and `make ocr-setup` are explicit preparation steps. Runtime prediction performs no dependency or model installation. Keep application and serving context limits aligned, and avoid concurrent evaluation/UI inference on the single local slot.
+Limits are 2,000 claim characters, 300,000 inference source characters, and PDFs of 25 MB and 200 physical pages. OCR, column order, hyphenation, selection and semantic interpretation remain failure sources. A scanned body with a selectable header may escape the OCR heuristic. PDF parsing runs in-process before OCR bounds. The browser is a single-user local application without deployment authentication or scaling.
 
-`make submission` builds the CPU `linux/amd64` predictor; `make verify-submission` runs isolated container contract checks. Provide read-only inputs at `/data`, the required runtime endpoint variables, and writable output/cache paths. The image includes pinned Python dependencies and PDF/OCR tools, not model weights or gold labels. `make run` launches the demo container with a persistent booklet-library mount. Local Colima context commands are in [README.md](README.md).
+Before submission, complete pending measurements, verify the actual organizer endpoint and produce the final report within the six-page PDF limit. Software compatibility and local public-data performance do not certify acceptance or private-benchmark quality. No entry has been submitted.
 
-`make evaluate-prepare` and `make evaluate` reproduce the selected development evaluation. Inputs, gold labels, selection metadata, per-case results and code/model/input identity are kept separately. A changed run identity requires a fresh output directory. Temperature zero does not guarantee bitwise determinism. Preserve artifact hashes and the final source commit; the starting template commit is `7f2382275461baf3fa6c8855d157d86abffe9f0e`.
-
-The next model-quality priority is distinguishing missing evidence from explicit contradiction. Before submission, establish an independent evaluation plan accounting for duplicates and shared booklets, measure official task A overlap, test organizer credentials, and complete team metadata. The generated presentation PDF is an engineering report, not a submitted entry.
+At the user's requested stop, testing and evaluation were halted. The local model and UI were stopped, ports **8081** and **8000** had no listener, and the Colima VM was stopped. The final image rebuild and PDF regeneration remain pending. The existing V0.4 PDF is an earlier draft and has not been rebuilt after this status update.
 
 ## License and references
 
-Source code uses the template's Apache-2.0 license; project documentation uses CC-BY-4.0. Imported material retains its original license and attribution. New generated datasets must follow the event's CDLA-Permissive-2.0 requirement and preserve third-party rights.
+Code follows Apache-2.0; documentation uses CC-BY-4.0. Imported datasets and official booklets retain their licenses and attribution. Newly distributed generated datasets must follow the event's CDLA-Permissive-2.0 requirement and preserve third-party rights.
 
-- [Official template](https://github.com/HackApertus/project-template) and [verified local requirements](docs/event-requirements.md)
+- [Project template](https://github.com/HackApertus/project-template) and [recorded event requirements](docs/event-requirements.md)
 - [OST challenge](https://hackapertus.notion.site/3deb4fec112a80258fd2ddc61616011d) and [solution API](https://hackapertus.notion.site/solution-api-guide-ef5b4fec112a834da43101ede56300f5)
-- [Official evaluator](https://gitlab.com/ifsoftware/hackapertus-starter) and [OST dataset](https://huggingface.co/datasets/OSTswiss/MNLIoverSwissVotingBooklets)
-- [Apertus model card](https://huggingface.co/swiss-ai/Apertus-v1.5-8B) and [Federal Chancellery archive](https://www.bk.admin.ch/de/sammlung-der-abstimmungsbuechlein-seit-1978)
+- [Official evaluator](https://gitlab.com/ifsoftware/hackapertus-starter), [OST dataset](https://huggingface.co/datasets/OSTswiss/MNLIoverSwissVotingBooklets) and [Federal Chancellery archive](https://www.bk.admin.ch/de/sammlung-der-abstimmungsbuechlein-seit-1978)

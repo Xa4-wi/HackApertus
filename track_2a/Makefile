@@ -3,12 +3,12 @@ IMAGE ?= claimlens:local
 PORT ?= 8000
 PLATFORM ?= linux/amd64
 DOCKER ?= docker
-CONFIG_VARS = BASE_URL API_KEY LLM_NAME LLM_BASE_URL LLM_API_KEY LLM_TIMEOUT_SECONDS LOCAL_MODEL_ID CONTEXT_TOKENS DOCUMENT_TIMEOUT_SECONDS MAX_DOCUMENT_MODEL_CALLS
+CONFIG_VARS = BASE_URL API_KEY LLM_NAME LLM_BASE_URL LLM_API_KEY LLM_TIMEOUT_SECONDS LOCAL_MODEL_ID CONTEXT_TOKENS DOCUMENT_TIMEOUT_SECONDS MAX_DOCUMENT_MODEL_CALLS DOCUMENT_STRATEGY RETRIEVAL_PROMPT_TOKENS RETRIEVAL_TIMEOUT_SECONDS
 FORWARD_ENV = $(foreach var,$(CONFIG_VARS),$(if $(filter undefined,$(origin $(var))),,-e $(var)))
 
-.PHONY: run build submission dev test test-ui demo model-pull model-serve dataset booklets ocr-setup evaluate-prepare evaluate report verify-submission
+.PHONY: run build submission dev test test-ui model-pull model-serve dataset booklets ocr-setup evaluate-prepare evaluate report report-v2 verify-submission check-endpoint
 build:
-	$(DOCKER) build --platform $(PLATFORM) --target demo -t $(IMAGE) .
+	$(DOCKER) build --platform $(PLATFORM) --target app -t $(IMAGE) .
 
 submission:
 	$(DOCKER) build --platform $(PLATFORM) --target submission -t claimlens:submission .
@@ -26,14 +26,14 @@ test:
 test-ui:
 	node tests/frontend_smoke.cjs
 
-demo:
-	PYTHONPATH=src $(PYTHON) -m claimlens --input data/demo-cases.jsonl --output output/demo-predictions.jsonl --demo
-
 model-pull:
 	$(PYTHON) scripts/pull_local_model.py
 
 model-serve:
 	bash scripts/serve_local_model.sh
+
+check-endpoint:
+	$(PYTHON) scripts/check_endpoint.py
 
 # Install requirements-data.txt first. Existing snapshots are preserved.
 dataset:
@@ -52,6 +52,9 @@ evaluate:
 	$(PYTHON) scripts/evaluate_local.py run --resume
 
 report:
+	$(PYTHON) scripts/build_submission_report.py
+
+report-v2:
 	$(PYTHON) scripts/build_report.py
 
 verify-submission: submission

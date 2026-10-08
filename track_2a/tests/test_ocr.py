@@ -61,6 +61,33 @@ class OCRTests(unittest.TestCase):
         self.assertEqual(renders[0][renders[0].index("-scale-to") + 1], "2000")
         self.assertFalse(Path(renders[0][-1]).parent.exists())
 
+    def test_unspecified_language_recognizes_all_three_in_one_pass(self):
+        text, warnings = self.invoke([7], "auto")
+        self.assertEqual(text, {7: self.text.decode()})
+        recognition = [command for command, _ in self.calls
+                       if command[0] == "tesseract" and "--list-langs" not in command]
+        self.assertEqual(len(recognition), 1)
+        self.assertEqual(recognition[0][-3:], ["-l", "deu+fra+ita", "txt"])
+        self.assertIn("approximate", " ".join(warnings))
+
+    def test_unspecified_language_requires_complete_language_data(self):
+        self.languages = "deu\nita\n"
+        text, warnings = self.invoke([7], "auto")
+        self.assertEqual(text, {})
+        self.assertIn("unavailable: fra", " ".join(warnings))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_unspecified_language_uses_complete_project_language_data(self):
+        tessdata = Path(self.temporary.name) / "tessdata"
+        tessdata.mkdir()
+        for code in ("deu", "fra", "ita"):
+            (tessdata / (code + ".traineddata")).write_bytes(b"fixture")
+        environment = {key: value for key, value in os.environ.items() if key != "TESSDATA_PREFIX"}
+        with patch("claimlens.ocr.LOCAL_TESSDATA", tessdata), patch.dict(os.environ, environment, clear=True):
+            self.invoke([7], "auto")
+        tesseract_calls = [command for command, _ in self.calls if command[0] == "tesseract"]
+        self.assertTrue(all("--tessdata-dir" in command and str(tessdata) in command for command in tesseract_calls))
+
     def test_hard_page_limit_and_invalid_numbers(self):
         text, warnings = self.invoke([0, True, "1"] + list(range(1, 30)), max_pages=50)
         self.assertEqual(list(text), list(range(1, 21)))

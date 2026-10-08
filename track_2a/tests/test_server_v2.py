@@ -4,7 +4,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 from claimlens.config import Settings
 from claimlens.models import ValidationError
@@ -18,7 +18,7 @@ class LibraryHTTPTests(unittest.TestCase):
         self.library.list_documents.return_value = [{"id": "booklet-test", "title": "Vote", "votes": ["Proposal"]}]
         self.library.import_pdf.return_value = self.library.list_documents.return_value[0]
         self.library.import_url.return_value = self.library.list_documents.return_value[0]
-        self.settings = Settings("http://localhost:8081/v1", "private-secret")
+        self.settings = Settings("http://localhost:8081/v1", "private-secret", local_model_id="local-apertus")
         self.server = create_server(self.settings, port=0, library=self.library)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -42,6 +42,31 @@ class LibraryHTTPTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["documents"][0]["id"], "booklet-test")
         self.assertNotIn(b"private-secret", body)
         self.assertNotIn(b"8081", body)
+        self.assertNotIn("proposals", json.loads(body))
+        self.assertNotIn("examples", json.loads(body))
+
+    def test_no_mode_defaults_to_live_and_stored_sources_are_rejected(self):
+        self.library.get_proposal.return_value = {"passages": [], "warnings": []}
+        body = {"document_id": "booklet-test", "vote": "Proposal", "claim": "A claim"}
+        with patch("claimlens.server.check_claim", return_value={"mode": "live", "warnings": []}) as check:
+            status, _, result = self.request("POST", "/api/check", json.dumps(body), {"Content-Type": "application/json"})
+            self.assertEqual(status, 200)
+            self.assertEqual(check.call_args.args[3], "live")
+            self.assertEqual(json.loads(result)["mode"], "live")
+            check.reset_mock()
+            body["proposal_id"] = "old-walkthrough"
+            self.assertEqual(self.request("POST", "/api/check", json.dumps(body), {"Content-Type": "application/json"})[0], 400)
+            check.assert_not_called()
+
+    def test_browser_never_uses_a_remote_model_endpoint(self):
+        with patch.object(Settings, "local_model_configured", new_callable=PropertyMock, return_value=False):
+            with patch("claimlens.server.model_status") as probe, patch("claimlens.server.check_claim") as check:
+                _, _, body = self.request("GET", "/api/model/status")
+                self.assertFalse(json.loads(body)["reachable"])
+                request = {"document_id": "booklet-test", "vote": "Proposal", "claim": "A claim"}
+                self.assertEqual(self.request("POST", "/api/check", json.dumps(request), {"Content-Type": "application/json"})[0], 400)
+                probe.assert_not_called()
+                check.assert_not_called()
 
     def test_raw_pdf_upload_preserves_bytes_and_passes_metadata(self):
         content = b"%PDF-1.4\nexample"

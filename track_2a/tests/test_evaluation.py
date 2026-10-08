@@ -129,7 +129,9 @@ class EvaluationTests(unittest.TestCase):
             self.assertFalse(identity["model_artifact"]["runtime_verified"])
             self.assertEqual(identity["model_artifact"]["intended_revision"], "248ec68a63e219e3f061e4c946fc8a20d63b9975")
             for change in ({"base_url": "http://127.0.0.1:8082/v1"}, {"timeout": 50},
-                           {"document_timeout": 100}, {"max_document_model_calls": 10}, {"context_tokens": 16384}):
+                           {"document_timeout": 100}, {"max_document_model_calls": 10}, {"context_tokens": 16384},
+                           {"document_strategy": "exhaustive"}, {"retrieval_timeout": 90},
+                           {"retrieval_prompt_tokens": 4000}):
                 with self.subTest(change=change):
                     self.assertNotEqual(evaluation.run_identity(inputs, replace(settings, **change)), identity)
             self.assertEqual(evaluation.run_identity(inputs, replace(settings, api_key="ROTATED-KEY")), identity)

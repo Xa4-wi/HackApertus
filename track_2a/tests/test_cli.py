@@ -11,9 +11,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from claimlens.booklets import prepare_case
-from claimlens.cli import demo_proposal, main, prediction_record, run_batch
+from claimlens.cli import main, prediction_record, run_batch
 from claimlens.config import PROJECT_ROOT, Settings, load_dotenv
-from claimlens.corpus import public_config
+from claimlens.config import public_config
 from claimlens.models import DEFAULT_MODEL, ProviderError, ValidationError
 
 
@@ -55,19 +55,10 @@ def ui_result(label="entailment"):
 
 
 class BatchTests(unittest.TestCase):
-    def test_bundled_cli_walkthrough_is_offline_and_preserves_example_ids(self):
-        input_path = PROJECT_ROOT / "data" / "demo-cases.jsonl"
-        cases = [json.loads(line) for line in input_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        with tempfile.TemporaryDirectory() as directory:
-            output_path = Path(directory) / "demo-results.jsonl"
-            with patch("claimlens.engine.request_completion") as completion:
-                count = run_batch(input_path, output_path, Settings(), demo=True)
-                completion.assert_not_called()
-            rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
-        self.assertEqual(count, len(cases))
-        self.assertEqual([row["id"] for row in rows], [case["id"] for case in cases])
-        self.assertTrue(all(row["metrics"]["input_tokens"] == 0 and row["metrics"]["output_tokens"] == 0
-                            and row["metrics"]["inference_time_ms"] >= 0 for row in rows))
+    def test_offline_demo_flag_is_not_an_application_mode(self):
+        with self.assertRaises(SystemExit) as exited, patch("sys.stderr", new_callable=io.StringIO):
+            main(["--demo"])
+        self.assertEqual(exited.exception.code, 2)
 
     def test_nine_language_pairs_keep_all_source_text_and_official_schema(self):
         cases = [reference_case(claim_lang + "-" + source_lang, claim_lang, source_lang)
@@ -162,16 +153,6 @@ class SubmissionBoundaryTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             prediction_record("case", result)
 
-    def test_demo_requires_both_exact_source_and_exact_claim(self):
-        proposal, claim, _ = prepare_case(reference_case(), Path("."))
-        candidate = copy.deepcopy(proposal)
-        candidate["examples"] = [{"claim": claim}]
-        self.assertIs(demo_proposal(proposal, claim, [candidate]), candidate)
-        with self.assertRaises(ValidationError):
-            demo_proposal(proposal, claim + " ", [candidate])
-        proposal["passages"][0]["text"] += " changed"
-        with self.assertRaises(ValidationError):
-            demo_proposal(proposal, claim, [candidate])
 
 
 class BookletInputTests(unittest.TestCase):
@@ -256,7 +237,7 @@ class ConfigurationTests(unittest.TestCase):
     def test_public_browser_config_excludes_keys_provider_url_and_answers(self):
         proposal, claim, _ = prepare_case(reference_case(), Path("."))
         proposal["examples"] = [{"id": "sample", "claim": claim, "result": {"answer-secret": "answer"}}]
-        visible = json.dumps(public_config(SETTINGS, [proposal]))
+        visible = json.dumps(public_config(SETTINGS))
         for hidden in ("test-private-key", "proxy.example", "answer-secret", SOURCES["de"]):
             self.assertNotIn(hidden, visible)
 

@@ -24,7 +24,7 @@ def load_dotenv(path=None):
             continue
         key, value = line.split("=", 1)
         key, value = key.strip(), value.strip()
-        if key not in {"BASE_URL", "API_KEY", "LLM_NAME", "LLM_BASE_URL", "LLM_API_KEY", "LLM_TIMEOUT_SECONDS", "LOCAL_MODEL_ID", "CONTEXT_TOKENS", "DOCUMENT_TIMEOUT_SECONDS", "MAX_DOCUMENT_MODEL_CALLS"}:
+        if key not in {"BASE_URL", "API_KEY", "LLM_NAME", "LLM_BASE_URL", "LLM_API_KEY", "LLM_TIMEOUT_SECONDS", "LOCAL_MODEL_ID", "CONTEXT_TOKENS", "DOCUMENT_TIMEOUT_SECONDS", "MAX_DOCUMENT_MODEL_CALLS", "DOCUMENT_STRATEGY", "RETRIEVAL_PROMPT_TOKENS", "RETRIEVAL_TIMEOUT_SECONDS"}:
             continue
         if key in {"BASE_URL", "LLM_BASE_URL"} and inherited.intersection({"BASE_URL", "LLM_BASE_URL"}):
             continue
@@ -45,6 +45,9 @@ class Settings:
     context_tokens: int = 8192
     document_timeout: float = 1800.0
     max_document_model_calls: int = 48
+    document_strategy: str = "retrieval"
+    retrieval_prompt_tokens: int = 5000
+    retrieval_timeout: float = 120.0
 
     @property
     def local_model_configured(self):
@@ -110,9 +113,33 @@ class Settings:
             raise ValidationError("DOCUMENT_TIMEOUT_SECONDS must be between 1 and 3600.")
         if not 2 <= max_calls <= 128:
             raise ValidationError("MAX_DOCUMENT_MODEL_CALLS must be between 2 and 128.")
+        strategy = os.environ.get("DOCUMENT_STRATEGY", "retrieval").strip()
+        if strategy not in ("retrieval", "exhaustive"):
+            raise ValidationError("DOCUMENT_STRATEGY must be retrieval or exhaustive.")
+        try:
+            retrieval_tokens = int(os.environ.get("RETRIEVAL_PROMPT_TOKENS", "5000"))
+            retrieval_timeout = float(os.environ.get("RETRIEVAL_TIMEOUT_SECONDS", "120"))
+        except ValueError:
+            raise ValidationError("Retrieval prompt and timeout limits must be numbers.") from None
+        if not 1500 <= retrieval_tokens <= 12000:
+            raise ValidationError("RETRIEVAL_PROMPT_TOKENS must be between 1500 and 12000; the serving context also limits it.")
+        if not 1 <= retrieval_timeout <= 300:
+            raise ValidationError("RETRIEVAL_TIMEOUT_SECONDS must be between 1 and 300.")
         settings = cls(base_url, api_key, model, timeout, local_model_id,
-                       context_tokens, document_timeout, max_calls)
+                       context_tokens, document_timeout, max_calls,
+                       strategy, retrieval_tokens, retrieval_timeout)
         if settings.local_model_configured and (
                 len(local_model_id) > 500 or any(character.isspace() for character in local_model_id)):
             raise ValidationError("LOCAL_MODEL_ID must be a model identifier of at most 500 characters without whitespace.")
         return settings
+
+
+def public_config(settings):
+    """Browser configuration, without credentials or precomputed predictions."""
+    return {
+        "model": {"id": settings.model, "label": "Apertus 1.5 " + ("70B" if "70B" in settings.model else "8B")},
+        "local_model_configured": settings.local_model_configured,
+        "document_strategy": settings.document_strategy,
+        "request_timeout_seconds": (min(settings.document_timeout, settings.retrieval_timeout)
+                                    if settings.document_strategy == "retrieval" else settings.document_timeout) + 10,
+    }

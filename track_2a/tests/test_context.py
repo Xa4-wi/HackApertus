@@ -23,7 +23,7 @@ SOURCES = [
     {"id": "original-page-5", "page": 5, "language": "fr", "text": "Cette autre proposition concerne une route cantonale.\n" * 500},
     {"id": "original-page-20", "page": 20, "language": "fr", "text": "Tous les travailleurs de la catégorie A reçoivent 200 CHF à partir de 2028."},
 ]
-SETTINGS = Settings("https://evaluation.example/v1", context_tokens=8192)
+SETTINGS = Settings("https://evaluation.example/v1", context_tokens=8192, document_strategy="exhaustive")
 USAGE = {"input_tokens": 100, "output_tokens": 10, "context_tokens": None}
 
 
@@ -120,12 +120,13 @@ class HierarchicalTests(unittest.TestCase):
                     check_claim({"passages": SOURCES}, CLAIM, DEFAULT_MODEL, "live", SETTINGS)
                 final.assert_not_called()
 
-    def test_consolidation_overflow_does_not_drop_evidence_or_vote_chunk_labels(self):
+    def test_oversized_consolidation_rejects_reduction_above_the_limit(self):
         def extraction(_claim, units, *_args):
             return {"complete": True, "evidence_ids": [unit["id"] for unit in units]}, USAGE
         with patch("claimlens.context.request_extraction", side_effect=extraction), \
+                patch("claimlens.context.request_reduction", side_effect=extraction), \
                 patch("claimlens.engine.request_completion") as final:
-            with self.assertRaisesRegex(ValidationError, "selected evidence exceeds"):
+            with self.assertRaisesRegex(ValidationError, "evidence-reduction limit"):
                 check_claim({"passages": SOURCES}, CLAIM, DEFAULT_MODEL, "live", SETTINGS)
             final.assert_not_called()
 

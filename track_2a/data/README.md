@@ -1,8 +1,12 @@
 # ClaimLens data
 
-`corpus.json`, `demo-cases.jsonl` and `ost-sample.jsonl` support the small offline
-walkthrough. The full downloaded dataset lives in the ignored `local/ost/`
-directory and is not part of the prediction image.
+The downloaded dataset lives in the ignored `local/ost/` directory, and official
+booklets are cached under `local/library/`. Neither is included in the prediction
+image. `ost-sample.jsonl` retains a small attributed source sample for inspection.
+
+The former stored walkthrough is removed from the application. Its source and
+quotation examples are retained only in `tests/fixtures/reference-examples.json`
+for regression testing. The browser and CLI cannot replay them as predictions.
 
 ## Download the full dataset
 

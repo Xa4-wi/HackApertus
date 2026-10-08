@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from claimlens.config import Settings
-from claimlens.corpus import load_corpus
+from pathlib import Path
 from claimlens.engine import check_claim, validate_model_result
 from claimlens.llm import _RejectRedirects, completion_url, request_completion
 from claimlens.models import DEFAULT_MODEL, ProviderError, ValidationError
@@ -42,37 +42,19 @@ def provider_response(result=MODEL_RESULT, usage=None, finish_reason="stop"):
 
 
 class EngineTests(unittest.TestCase):
-    def test_bundled_walkthrough_labels_and_quotes_pass_validation_offline(self):
-        proposals = load_corpus()
-        self.assertTrue(proposals)
-        with patch("claimlens.engine.request_completion") as completion:
-            for proposal in proposals:
-                for example in proposal["examples"]:
-                    with self.subTest(example=example["id"]):
-                        result = check_claim(proposal, example["claim"], DEFAULT_MODEL, "demo", None)
-                        self.assertEqual(result["overall"], example["result"]["overall"])
-                        self.assertFalse(result["validation_degraded"])
-                        self.assertEqual(result["metrics"]["inference_time_ms"], 0)
-            completion.assert_not_called()
+    def test_archived_reference_examples_preserve_quote_validation(self):
+        fixture = Path(__file__).parent / "fixtures/reference-examples.json"
+        for proposal in json.loads(fixture.read_text())["proposals"]:
+            for example in proposal["examples"]:
+                with self.subTest(example=example["id"]):
+                    result = validate_model_result(example["claim"], example["result"], proposal["passages"])
+                    self.assertEqual(result["overall"], example["result"]["overall"])
+                    self.assertFalse(result["validation_degraded"])
 
-    def test_demo_is_exact_offline_and_does_not_mutate_corpus(self):
+    def test_stored_examples_never_replace_live_inference(self):
         with patch("claimlens.engine.request_completion") as completion:
-            result = check_claim(PROPOSAL, CLAIM, DEFAULT_MODEL, "demo", None)
-            completion.assert_not_called()
-        self.assertEqual(result["classification"], 2)
-        self.assertFalse(result["validation_degraded"])
-        self.assertEqual(result["metrics"]["token_usage_source"], "not_called")
-        self.assertEqual(result["metrics"]["input_tokens"], 0)
-        result["checks"][0]["label"] = "neutral"
-        result["passages"][0]["text"] = "Changed by caller"
-        self.assertEqual(MODEL_RESULT["checks"][0]["label"], "contradiction")
-        self.assertEqual(PASSAGE["text"], "The annual fee is CHF 200 from 2028.")
-
-    def test_demo_rejects_custom_or_modified_claim_before_provider(self):
-        with patch("claimlens.engine.request_completion") as completion:
-            for claim in ("A custom claim.", CLAIM + " "):
-                with self.subTest(claim=claim), self.assertRaises(ValidationError):
-                    check_claim(PROPOSAL, claim, DEFAULT_MODEL, "demo", None)
+            with self.assertRaisesRegex(ValidationError, "Only live"):
+                check_claim(PROPOSAL, CLAIM, DEFAULT_MODEL, "demo", SETTINGS)
             completion.assert_not_called()
 
     def test_invalid_claims_modes_models_and_languages_do_not_call_provider(self):
@@ -145,15 +127,12 @@ class EngineTests(unittest.TestCase):
                     check_claim(proposal, CLAIM, DEFAULT_MODEL, "live", SETTINGS)
             completion.assert_not_called()
 
-    def test_empty_corpus_abstains_without_provider(self):
+    def test_empty_source_is_rejected_without_a_fabricated_verdict(self):
         with patch("claimlens.engine.request_completion") as completion:
-            result = check_claim({"passages": []}, CLAIM, DEFAULT_MODEL, "live", SETTINGS)
+            with self.assertRaisesRegex(ValidationError, "No readable source"):
+                check_claim({"passages": []}, CLAIM, DEFAULT_MODEL, "live", SETTINGS)
             completion.assert_not_called()
-        self.assertEqual(result["classification"], 1)
-        self.assertEqual(result["metrics"]["input_tokens"], 0)
 
-
-class ProviderTests(unittest.TestCase):
     def test_outbound_request_keeps_vote_and_source_attribution(self):
         with patch("claimlens.llm.build_opener") as opener:
             opener.return_value.open.return_value = provider_response(usage={"prompt_tokens": 42, "completion_tokens": 20})
@@ -178,16 +157,19 @@ class ProviderTests(unittest.TestCase):
                 _, metrics = request_completion(CLAIM, [PASSAGE], DEFAULT_MODEL, SETTINGS)
             self.assertIsNone(metrics["input_tokens"])
             self.assertIsNone(metrics["output_tokens"])
-            self.assertEqual(metrics["token_usage_source"], "not_supplied")
+            self.assertEqual(metrics["token_usage_source"], "incomplete_provider_usage")
 
     def test_incomplete_or_malformed_response_is_an_error(self):
         responses = [provider_response(finish_reason="length"), io.BytesIO(b"not json"),
                      io.BytesIO(b'{"choices": []}'), io.BytesIO(b"x" * 1_048_577)]
         for response in responses:
-            with self.subTest(response=response), patch("claimlens.llm.build_opener") as opener:
-                opener.return_value.open.return_value = response
+            raw = response.getvalue()
+            with self.subTest(response=response), patch("claimlens.llm.build_opener") as opener, \
+                    patch("claimlens.llm.time.sleep"):
+                opener.return_value.open.side_effect = lambda *args, **kwargs: io.BytesIO(raw)
                 with self.assertRaises(ProviderError):
                     request_completion(CLAIM, [PASSAGE], DEFAULT_MODEL, SETTINGS)
+                self.assertEqual(opener.return_value.open.call_count, 1 if len(raw) > 1_048_576 else 3)
 
     def test_provider_failure_never_exposes_body_key_or_url(self):
         failures = [HTTPError("https://private.example", 401, "test-secret-only", {},
@@ -223,7 +205,9 @@ class ProviderTests(unittest.TestCase):
         with patch("claimlens.llm.build_opener") as opener:
             opener.return_value.open.return_value = provider_response()
             request_completion(CLAIM, [PASSAGE], DEFAULT_MODEL, settings)
-            self.assertEqual(opener.return_value.open.call_args.kwargs["timeout"], 600)
+            request_timeout = opener.return_value.open.call_args.kwargs["timeout"]
+            self.assertGreater(request_timeout, 599)
+            self.assertLessEqual(request_timeout, 600)
 
 
 if __name__ == "__main__":

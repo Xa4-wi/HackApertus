@@ -1,56 +1,37 @@
 "use strict";
 
-// The browser only talks to the local application. Provider credentials stay on the server.
-const ui = Object.fromEntries([
-  "claim-form", "input-title", "proposal", "model", "claim", "claim-language", "examples", "character-count",
-  "proposal-description", "live-mode", "demo-mode", "live-mode-status", "mode-description",
-  "check-button", "check-button-label", "form-error", "connection-error", "results",
-  "results-title", "overall-label", "result-run", "result-summary", "result-metrics", "result-warnings", "result-processing",
-  "highlighted-claim", "checks", "check-count", "evidence-content", "evidence-count",
-  "evidence-subtitle", "corpus-note", "download-button", "runtime-indicator", "runtime-title",
-  "runtime-message", "runtime-context", "refresh-runtime", "library-source", "demo-source",
-  "library-count", "library-source-panel", "demo-source-panel", "document-select", "document-details",
-  "refresh-library", "library-error", "vote", "vote-options", "vote-field", "vote-help",
-  "import-panel", "import-form", "url-method", "upload-method", "url-import-field", "pdf-import-field",
-  "booklet-url", "booklet-file", "booklet-language", "booklet-title", "booklet-vote", "import-button",
-  "import-status", "import-error", "check-progress", "check-progress-title", "check-progress-detail", "check-elapsed",
-].map((id) => [id, document.getElementById(id)]));
-
+// The browser sends source IDs and claims only to this local application.
+const ui = Object.fromEntries(Array.from(document.querySelectorAll("[id]"), (node) => [node.id, node]));
 const labels = {
   entailment: { friendly: "Supported", name: "entailment", classification: 0 },
   contradiction: { friendly: "Contradicted", name: "contradiction", classification: 2 },
   neutral: { friendly: "Unresolved", name: "neutral", classification: 1 },
 };
-const languageNames = { de: "German", fr: "French", it: "Italian", en: "English" };
+const languageNames = { de: "German", fr: "French", it: "Italian" };
 let configuration = null;
+let documents = [];
+let selectedId = null;
+let runtimeStatus = null;
 let currentResult = null;
+let resultDocument = null;
 let busy = false;
 let importing = false;
 let refreshingLibrary = false;
-let runtimeStatus = null;
 let checkingRuntime = false;
-let documents = [];
-let sourceKind = "demo";
 let importMethod = "url";
-let resultDocument = null;
-let progressTimer = null;
-const emptyEvidence = ui["evidence-content"].firstElementChild.cloneNode(true);
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
-  if (text !== undefined && text !== null) node.textContent = String(text);
+  if (text !== undefined) node.textContent = String(text);
   return node;
 }
 
 function safeSourceUrl(value) {
-  if (!value) return null;
   try {
     const url = new URL(value);
     return ["https:", "http:"].includes(url.protocol) ? url.href : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function sourceLink(value, text) {
@@ -63,21 +44,6 @@ function sourceLink(value, text) {
   return link;
 }
 
-function verdict(label) {
-  const definition = labels[label] || labels.neutral;
-  const badge = element("span", "verdict", `${definition.classification} · ${definition.friendly} · ${definition.name}`);
-  badge.dataset.label = definition.name;
-  return badge;
-}
-
-function selectedProposal() {
-  return configuration?.proposals?.find((proposal) => proposal.id === ui.proposal.value);
-}
-
-function selectedDocument() {
-  return documents.find((booklet) => booklet.id === ui["document-select"].value);
-}
-
 function pdfLink(booklet, text, page) {
   if (!booklet?.id) return null;
   const link = element("a", "source-link", text);
@@ -87,185 +53,139 @@ function pdfLink(booklet, text, page) {
   return link;
 }
 
-function readableDate(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+function verdict(label) {
+  const name = Object.hasOwn(labels, label) ? label : "neutral";
+  const badge = element("span", "verdict", `${labels[name].classification} · ${labels[name].friendly}`);
+  badge.dataset.label = name;
+  return badge;
 }
 
-function documentVotes(booklet) {
-  return (booklet?.votes || []).map((vote) => typeof vote === "string" ? vote : (vote?.title || vote?.name || vote?.vote || "")).filter(Boolean);
+function selectedDocument() {
+  return documents.find((booklet) => booklet.id === selectedId);
+}
+
+function pageLabel(count) {
+  return `${count} ${count === 1 ? "page" : "pages"}`;
+}
+
+function bookletTitle(booklet) {
+  const standard = /^Voting booklet (\d{4}-\d{2}-\d{2}) \([A-Z]{2}\)$/.exec(booklet.title || "");
+  if (!standard) return booklet.title || "Untitled booklet";
+  const date = new Date(standard[1] + "T12:00:00Z");
+  return Number.isNaN(date.getTime()) ? booklet.title : date.toLocaleDateString("en-GB", {
+    day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
+  });
+}
+
+function isReady() {
+  return configuration?.local_model_configured === true && runtimeStatus?.local === true && runtimeStatus?.reachable === true;
 }
 
 function resetResult() {
   currentResult = null;
   resultDocument = null;
   ui.results.hidden = true;
+  ui["empty-result"].hidden = false;
   ui["form-error"].hidden = true;
-  ui["evidence-content"].replaceChildren(emptyEvidence.cloneNode(true));
-  ui["evidence-count"].textContent = "SOURCE TRAIL";
-  ui["evidence-subtitle"].textContent = "The original words, kept close to the finding.";
-}
-
-function selectedMode() {
-  return document.querySelector('input[name="mode"]:checked').value;
-}
-
-function updateCharacterCount() {
-  ui["character-count"].textContent = `${ui.claim.value.length.toLocaleString()} / 2,000`;
-}
-
-function updateMode() {
-  const destination = configuration?.local_model_configured ? "local Apertus runtime" : "Apertus provider";
-  ui["mode-description"].textContent = selectedMode() === "live"
-    ? `Sends the claim and ${sourceKind === "library" ? "booklet text" : "selected passages"} to the configured ${destination}. ${sourceKind === "library" ? "Long booklets may be processed in several stages; coverage is reported with the result." : "The result is generated by the selected model."}`
-    : "The demo is a fixed walkthrough of the example claims. It does not run a model. Custom claims require Live Apertus.";
-  updateControls();
-}
-
-function updateProposal() {
-  const proposal = selectedProposal();
-  if (!proposal) return;
-  resetResult();
-  const language = languageNames[proposal.language] || proposal.language;
-  ui["proposal-description"].textContent = [language ? `Booklet language: ${language}` : "", proposal.description].filter(Boolean).join(" · ");
-  ui.examples.replaceChildren();
-  if (proposal.examples?.length) {
-    ui.examples.append(element("span", "examples-label", "TRY AN EXAMPLE"));
-    for (const example of proposal.examples) {
-      const button = element("button", "example-button", example.title);
-      button.type = "button";
-      button.addEventListener("click", () => {
-        ui.claim.value = example.claim;
-        ui["claim-language"].value = ["de", "fr", "it"].includes(example.claim_language) ? example.claim_language : "auto";
-        updateCharacterCount();
-        ui["form-error"].hidden = true;
-        ui.claim.focus();
-      });
-      ui.examples.append(button);
-    }
-    ui.claim.value = proposal.examples[0].claim;
-    ui["claim-language"].value = ["de", "fr", "it"].includes(proposal.examples[0].claim_language) ? proposal.examples[0].claim_language : "auto";
-  } else {
-    ui.claim.value = "";
-    ui["claim-language"].value = "auto";
-  }
-  updateCharacterCount();
-  ui.vote.value = proposal.vote || proposal.title || "";
-  ui.vote.required = false;
-  ui["vote-help"].textContent = "This walkthrough uses a fixed evidence set. Import a booklet to examine a different proposal.";
-  ui["corpus-note"].replaceChildren();
-  ui["corpus-note"].append(
-    element("strong", "", proposal.is_fixture ? "Illustrative evidence set" : "Selected evidence set"),
-    element("p", "", proposal.is_fixture
-      ? "This proposal and its passages are fictional fixtures for testing the workflow. They are not official voting material."
-      : "Findings are limited to the bundled passages for this proposal. Review the original source for its full context."),
-  );
-  const link = sourceLink(proposal.source_url, "View source ↗");
-  if (link) ui["corpus-note"].append(link);
-  ui["corpus-note"].hidden = false;
-}
-
-function setBusy(value) {
-  busy = value;
-  document.body.classList.toggle("is-loading", value);
-  ui["claim-form"].setAttribute("aria-busy", String(value));
-  ui["check-button-label"].textContent = value ? "Reading the evidence…" : "Examine claim";
-  ui["check-progress"].hidden = !value;
-  updateControls();
 }
 
 function updateControls() {
   const locked = busy || importing || !configuration;
-  const missingSource = sourceKind === "library" ? !selectedDocument() : !selectedProposal();
-  const liveUnavailable = selectedMode() === "live" && (!configuration?.live_ready || runtimeStatus?.reachable === false);
-  ui["check-button"].disabled = locked || missingSource || liveUnavailable;
-  for (const id of ["proposal", "model", "claim", "claim-language", "library-source", "demo-source", "document-select"]) ui[id].disabled = locked;
-  ui["demo-source"].disabled = locked || !configuration?.proposals?.length;
-  ui["document-select"].disabled = locked || !documents.length;
-  ui.vote.disabled = locked || sourceKind !== "library";
+  const source = selectedDocument();
+  for (const id of ["booklet-search", "source-language", "vote", "claim", "claim-language"]) ui[id].disabled = locked;
+  for (const button of ui["document-list"].querySelectorAll("button")) button.disabled = locked;
   ui["refresh-library"].disabled = locked || refreshingLibrary;
-  ui["refresh-runtime"].disabled = busy || checkingRuntime;
-  document.querySelectorAll('input[name="mode"]').forEach((input) => {
-    input.disabled = locked || (input.value === "live" && !configuration?.live_ready)
-      || (input.value === "demo" && sourceKind === "library");
-  });
-  document.querySelectorAll(".example-button").forEach((button) => { button.disabled = locked; });
-  for (const control of ui["import-form"].elements) control.disabled = busy || importing || !configuration;
-  ui["booklet-url"].disabled = busy || importing || !configuration || importMethod !== "url";
-  ui["booklet-file"].disabled = busy || importing || !configuration || importMethod !== "upload";
-  ui["url-method"].disabled = busy || importing;
-  ui["upload-method"].disabled = busy || importing;
+  ui["refresh-runtime"].disabled = busy || checkingRuntime || !configuration;
+  ui["check-button"].disabled = locked || !source || !isReady() || !ui.claim.value.trim() || !ui.vote.value.trim();
+  ui["check-hint"].textContent = !isReady() ? "Start local Apertus to enable claim checking."
+    : !source ? "Choose a booklet from the library."
+      : "Processed by local Apertus. Full booklets can take a few minutes.";
+  for (const control of ui["import-form"].elements) control.disabled = locked;
+  ui["booklet-url"].disabled = locked || importMethod !== "url";
+  ui["booklet-file"].disabled = locked || importMethod !== "upload";
+  ui["url-method"].disabled = locked;
+  ui["upload-method"].disabled = locked;
 }
 
-function setSourceKind(kind) {
-  sourceKind = kind;
-  ui["library-source"].setAttribute("aria-pressed", String(kind === "library"));
-  ui["demo-source"].setAttribute("aria-pressed", String(kind === "demo"));
-  ui["library-source-panel"].hidden = kind !== "library";
-  ui["demo-source-panel"].hidden = kind !== "demo";
-  ui["demo-mode"].checked = kind === "demo";
-  ui["live-mode"].checked = kind === "library";
-  if (kind === "library") updateDocument();
-  else updateProposal();
-  updateMode();
+function updateClaim() {
+  ui["character-count"].textContent = `${Array.from(ui.claim.value).length.toLocaleString()} / 2,000`;
+  resetResult();
+  updateControls();
 }
 
-function renderLibrary(preferredId) {
-  const selectedId = ui["document-select"].value;
-  const previousId = preferredId || selectedId;
-  ui["library-count"].textContent = String(documents.length);
-  const options = documents.map((booklet) => new Option(
-    `${booklet.title || "Untitled booklet"} · ${languageNames[booklet.language] || booklet.language || ""}`, booklet.id,
-  ));
-  ui["document-select"].replaceChildren(...(options.length ? options : [new Option("No booklets imported yet", "")]));
-  if (documents.some((booklet) => booklet.id === previousId)) ui["document-select"].value = previousId;
-  if (sourceKind === "library" && (preferredId || selectedId !== ui["document-select"].value)) updateDocument();
+function renderLibrary() {
+  const query = ui["booklet-search"].value.trim().toLocaleLowerCase();
+  const language = ui["source-language"].value;
+  const filtered = documents.filter((booklet) => (language === "all" || booklet.language === language)
+    && `${booklet.title} ${bookletTitle(booklet)} ${languageNames[booklet.language]}`.toLocaleLowerCase().includes(query))
+    .sort((a, b) => (b.title || "").localeCompare(a.title || "") || a.language.localeCompare(b.language));
+  ui["library-count"].textContent = query || language !== "all"
+    ? `${filtered.length} of ${documents.length} booklets` : `${documents.length} booklets`;
+  ui["document-list"].replaceChildren();
+  if (!filtered.length) {
+    ui["document-list"].append(element("p", "library-empty", documents.length
+      ? "No matching booklets. Try another date, title or language."
+      : "Your library is empty. Add an official PDF link or upload a booklet below."));
+  }
+  for (const booklet of filtered) {
+    const button = element("button", "document-option");
+    button.type = "button";
+    button.dataset.documentId = booklet.id;
+    button.setAttribute("aria-pressed", String(booklet.id === selectedId));
+    const copy = element("span", "document-option-copy");
+    copy.append(element("strong", "", bookletTitle(booklet)), element("small", "",
+      `${languageNames[booklet.language] || booklet.language} · ${pageLabel(booklet.page_count)}`));
+    const icon = element("span", "file-icon", "PDF");
+    icon.setAttribute("aria-hidden", "true");
+    const mark = element("span", "selected-mark", "✓");
+    mark.setAttribute("aria-hidden", "true");
+    button.append(icon, copy, mark);
+    button.addEventListener("click", () => {
+      if (busy || importing) return;
+      selectedId = booklet.id;
+      for (const item of ui["document-list"].querySelectorAll("button")) item.setAttribute("aria-pressed", String(item.dataset.documentId === selectedId));
+      updateDocument();
+    });
+    ui["document-list"].append(button);
+  }
   updateControls();
 }
 
 function updateDocument() {
   resetResult();
-  ui.examples.replaceChildren();
-  ui.claim.value = "";
-  ui["claim-language"].value = "auto";
-  updateCharacterCount();
-  ui.vote.required = true;
-  ui["vote-help"].textContent = "A booklet can cover several proposals. Name the one your claim concerns; suggestions remain editable.";
   const booklet = selectedDocument();
-  const votes = documentVotes(booklet);
-  ui["vote-options"].replaceChildren(...votes.map((vote) => new Option(vote, vote)));
-  ui.vote.value = votes[0] || "";
   ui["document-details"].replaceChildren();
-  ui["corpus-note"].replaceChildren();
-  ui["corpus-note"].hidden = !booklet;
+  ui["document-details"].hidden = !booklet;
+  ui["selected-source"].replaceChildren();
+  const votes = (booklet?.votes || []).map((vote) => typeof vote === "string" ? vote : (vote.title || vote.name || vote.vote || "")).filter(Boolean);
+  ui["vote-options"].replaceChildren(...votes.map((vote) => new Option(vote, vote)));
+  // Multiple proposals need an explicit choice; one proposal can be prefilled.
+  ui.vote.value = votes.length === 1 ? votes[0] : "";
   if (!booklet) {
-    ui["document-details"].append(element("p", "library-empty", "Your next source starts here. Add an official voting booklet using its PDF link, or upload a copy below."));
+    ui["selected-source"].textContent = "Select a booklet from the library to begin.";
     updateControls();
     return;
   }
-  const metadata = element("div", "document-metadata");
-  const language = languageNames[booklet.language] || booklet.language || "Language not specified";
-  metadata.append(element("span", "metadata-chip", language));
-  if (Number.isFinite(booklet.page_count)) metadata.append(element("span", "metadata-chip", `${booklet.page_count} pages`));
-  if (Number.isFinite(booklet.character_count)) metadata.append(element("span", "metadata-chip", `${booklet.character_count.toLocaleString()} characters`));
-  const origin = safeSourceUrl(booklet.source_url);
+  const icon = element("span", "file-icon", "PDF");
+  icon.setAttribute("aria-hidden", "true");
+  ui["selected-source"].append(icon, element("strong", "", bookletTitle(booklet)),
+    element("span", "", `· ${languageNames[booklet.language]} · ${pageLabel(booklet.page_count)}`));
   const links = element("div", "document-links");
-  links.append(pdfLink(booklet, "Read the PDF ↗"));
-  const original = sourceLink(booklet.source_url, "Original source ↗");
+  links.append(pdfLink(booklet, "Open PDF ↗"));
+  const original = sourceLink(booklet.source_url, "Official source ↗");
   if (original) links.append(original);
-  ui["document-details"].append(element("h3", "document-title", booklet.title || "Voting booklet"), metadata);
-  const sourceDescription = origin ? `Source: ${new URL(origin).hostname}` : "Source: uploaded PDF";
-  const imported = readableDate(booklet.imported_at);
-  ui["document-details"].append(element("p", "document-origin", `${sourceDescription}${imported ? ` · Added ${imported}` : ""}`), links);
-  for (const warning of booklet.warnings || []) ui["document-details"].append(element("p", "document-warning", warning));
-  ui["corpus-note"].append(element("strong", "", "Selected voting booklet"), element("p", "", booklet.title || "Voting booklet"),
-    element("p", "", `${language}${Number.isFinite(booklet.page_count) ? ` · ${booklet.page_count} original PDF pages` : ""}. Quotations remain linked to the source page.`), pdfLink(booklet, "Open source PDF ↗"));
+  ui["document-details"].append(links);
+  if (booklet.warnings?.length) {
+    const notes = element("details", "source-notes");
+    notes.append(element("summary", "", `${booklet.warnings.length} extraction ${booklet.warnings.length === 1 ? "note" : "notes"}`));
+    for (const warning of booklet.warnings) notes.append(element("p", "document-warning", warning));
+    ui["document-details"].append(notes);
+  }
   updateControls();
 }
 
-async function refreshLibrary(preferredId) {
-  if (refreshingLibrary) return;
+async function refreshLibrary() {
+  if (refreshingLibrary || busy || importing) return;
   refreshingLibrary = true;
   ui["library-error"].hidden = true;
   updateControls();
@@ -274,22 +194,21 @@ async function refreshLibrary(preferredId) {
     const data = await response.json();
     if (!response.ok || !Array.isArray(data.documents)) throw new Error(data.error || "Could not refresh the booklet library.");
     documents = data.documents;
-    renderLibrary(preferredId);
+    if (selectedId && !selectedDocument()) { selectedId = null; updateDocument(); }
+    renderLibrary();
   } catch (error) {
-    ui["library-error"].textContent = error instanceof TypeError ? "Could not reach the local library. Check the server and refresh again." : error.message;
+    ui["library-error"].textContent = error instanceof TypeError ? "Could not reach the local library. Start the app server and try again." : error.message;
     ui["library-error"].hidden = false;
-  } finally {
-    refreshingLibrary = false;
-    updateControls();
-  }
+  } finally { refreshingLibrary = false; updateControls(); }
 }
 
 async function refreshRuntime() {
   if (checkingRuntime) return;
   checkingRuntime = true;
-  updateControls();
+  runtimeStatus = null;
   ui["runtime-indicator"].dataset.state = "checking";
-  ui["runtime-message"].textContent = "Checking the model endpoint without running inference…";
+  ui["runtime-title"].textContent = "Checking connection";
+  updateControls();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
@@ -297,30 +216,29 @@ async function refreshRuntime() {
     const status = await response.json();
     if (!response.ok || typeof status.reachable !== "boolean") throw new Error("Status unavailable");
     runtimeStatus = status;
-    const place = status.local ? "Local Apertus" : "Apertus endpoint";
-    ui["runtime-title"].textContent = status.reachable ? `${place} is reachable` : (status.configured ? `${place} is unavailable` : "Model endpoint not configured");
-    ui["runtime-indicator"].dataset.state = status.reachable ? "ready" : "unavailable";
-    ui["runtime-message"].textContent = status.message || (status.reachable ? "Connection checked. Model outputs still require source review." : "Configure or start the runtime, then refresh its status.");
-    ui["runtime-context"].textContent = Number.isFinite(status.context_tokens) ? `${status.context_tokens.toLocaleString()} token context` : "";
-    ui["live-mode-status"].textContent = status.reachable ? (status.local ? "Local runtime reachable" : "Endpoint reachable") : (status.configured ? "Runtime unavailable" : "Set up .env to enable");
+    const ready = isReady();
+    ui["runtime-title"].textContent = ready ? "Ready" : (configuration.local_model_configured ? "Offline" : "Local setup needed");
+    ui["runtime-indicator"].dataset.state = ready ? "ready" : "unavailable";
+    ui["runtime-message"].textContent = ready ? "Connected. Each check runs on local Apertus."
+      : configuration.local_model_configured ? "The local model is not responding." : "The browser requires a local Apertus endpoint.";
+    ui["runtime-context"].textContent = ready && Number.isFinite(status.context_tokens) ? `${status.context_tokens.toLocaleString()} context` : "";
   } catch {
-    runtimeStatus = null;
-    ui["runtime-title"].textContent = configuration?.local_model_configured ? "Local model configured" : (configuration?.live_ready ? "Model endpoint configured" : "Model endpoint not configured");
-    ui["runtime-indicator"].dataset.state = "unknown";
-    ui["runtime-message"].textContent = "Could not verify runtime health. Refresh to try again; configuration alone does not confirm availability.";
+    ui["runtime-title"].textContent = "Connection not verified";
+    ui["runtime-indicator"].dataset.state = "unavailable";
+    ui["runtime-message"].textContent = "Could not check model status. Make sure the app and model are running, then refresh.";
     ui["runtime-context"].textContent = "";
-    ui["live-mode-status"].textContent = configuration?.live_ready ? "Health not verified" : "Set up .env to enable";
   } finally {
     clearTimeout(timeout);
     checkingRuntime = false;
+    ui["runtime-setup"].hidden = isReady();
+    ui["runtime-config-help"].hidden = configuration?.local_model_configured === true;
     updateControls();
   }
 }
 
 function setImportMethod(method) {
   importMethod = method;
-  ui["url-method"].setAttribute("aria-pressed", String(method === "url"));
-  ui["upload-method"].setAttribute("aria-pressed", String(method === "upload"));
+  for (const value of ["url", "upload"]) ui[`${value}-method`].setAttribute("aria-pressed", String(value === method));
   ui["url-import-field"].hidden = method !== "url";
   ui["pdf-import-field"].hidden = method !== "upload";
   ui["booklet-url"].required = method === "url";
@@ -328,7 +246,6 @@ function setImportMethod(method) {
   ui["import-error"].hidden = true;
   updateControls();
 }
-
 function renderHighlights(result) {
   // API offsets are Python/Unicode code-point offsets, not JavaScript UTF-16 offsets.
   const characters = Array.from(result.claim);
@@ -431,152 +348,129 @@ function selectCheck(index, userInitiated = false) {
   }
 }
 
-function renderResult(result) {
+function renderResult(result, source) {
   currentResult = result;
-  resultDocument = sourceKind === "library" ? selectedDocument() : null;
+  resultDocument = source;
   ui.results.hidden = false;
-  const overall = verdict(result.overall);
-  ui["overall-label"].textContent = overall.textContent;
-  ui["overall-label"].dataset.label = overall.dataset.label;
-  const modelName = configuration.models.find((model) => model.id === result.model)?.label || result.model;
-  ui["result-run"].textContent = result.mode === "demo" ? "DEMO · NO MODEL CALL" : `LIVE · ${modelName}`;
+  ui["empty-result"].hidden = true;
+  const badge = verdict(result.overall);
+  ui["overall-label"].textContent = badge.textContent;
+  ui["overall-label"].dataset.label = badge.dataset.label;
+  ui["result-run"].textContent = `Local ${configuration.model.label}`;
+  ui["result-source"].textContent = `${bookletTitle(source)} · ${languageNames[source.language]}`;
   ui["result-summary"].textContent = result.summary;
-  renderMetrics(result);
-  renderProcessing(result);
+  ui["result-validation-warning"].hidden = !result.validation_degraded;
+  const metrics = result.metrics || {};
+  const processing = result.processing || {};
+  const retrieval = processing.strategy === "retrieval";
+  const selectedPages = Array.isArray(processing.selected_source_pages)
+    ? processing.selected_source_pages.filter((page) => Number.isInteger(page) && page > 0) : [];
+  ui["result-strategy"].hidden = !retrieval;
+  ui["result-strategy"].textContent = retrieval ? "Selected passages" : "";
+  ui["result-coverage"].hidden = !retrieval;
+  ui["result-coverage"].textContent = retrieval
+    ? processing.coverage || "Apertus assessed selected passages. Evidence elsewhere in the booklet may be missing." : "";
+  const count = (value) => Number.isFinite(value) ? value.toLocaleString() : "Not reported";
+  const values = [
+    ["Analysis time", Number.isFinite(metrics.inference_seconds) ? `${metrics.inference_seconds.toFixed(1)} s` : "Not reported"],
+    ["Input tokens", count(metrics.input_tokens)], ["Output tokens", count(metrics.output_tokens)],
+    [retrieval ? "Pages selected / booklet" : "Source pages", retrieval
+      ? `${selectedPages.length ? count(selectedPages.length) : "Not reported"} / ${count(processing.source_pages)}` : count(processing.source_pages)],
+  ];
+  const list = element("dl", "metric-list");
+  for (const [label, value] of values) {
+    const item = element("div", "metric");
+    item.append(element("dt", "", label), element("dd", "", value));
+    list.append(item);
+  }
+  ui["result-metrics"].replaceChildren(list);
+  ui["result-processing"].replaceChildren(
+    element("h3", "processing-title", retrieval ? "Selected passages assessed" : processing.strategy === "hierarchical" ? "Document reviewed in stages" : "Source reviewed in one pass"),
+    element("p", "processing-detail", retrieval
+      ? `${count(processing.selected_units)} of ${count(processing.source_units)} source passages selected · ${count(processing.model_calls)} model calls · ${count(processing.context_limit_tokens)} token context window`
+      : `${count(processing.segments)} segments · ${count(processing.model_calls)} model calls · ${count(processing.context_limit_tokens)} token context window`),
+    element("p", "processing-description", processing.coverage || "Review the cited passages against the original PDF."),
+    element("p", "metrics-note", `Context-only tokens: ${count(metrics.context_tokens)} · ${count(metrics.context_characters)} source characters`),
+    element("p", "metrics-note", `Served model: ${result.served_model || "Not reported"}`),
+  );
+  if (retrieval) {
+    ui["result-processing"].append(
+      element("p", "processing-detail", `Selected PDF pages: ${selectedPages.length ? selectedPages.join(", ") : "Not reported"}`),
+      element("p", "processing-detail", `Local search index: ${processing.index_cache_hit === true ? "reused" : processing.index_cache_hit === false ? "built for this source" : "not reported"} · Cross-language search terms: ${processing.query_expansion === true ? "expanded" : processing.query_expansion === false ? "not expanded" : "not reported"}`),
+    );
+  }
   ui["result-warnings"].replaceChildren();
   for (const warning of result.warnings || []) ui["result-warnings"].append(element("p", "result-warning", warning));
+  ui["technical-details"]?.removeAttribute("open");
   renderHighlights(result);
   renderChecks(result);
   if (result.checks.length) selectCheck(0);
-  else {
-    ui["evidence-content"].replaceChildren(element("p", "evidence-empty", "No checkable parts were returned for this claim."));
-    ui["evidence-count"].textContent = "0 PASSAGES";
-  }
   ui["results-title"].focus({ preventScroll: true });
   ui.results.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
-}
-
-function renderProcessing(result) {
-  const processing = result.processing;
-  const container = ui["result-processing"];
-  container.replaceChildren();
-  container.hidden = !processing || result.mode === "demo";
-  if (container.hidden) return;
-  const hierarchical = processing.strategy === "hierarchical";
-  const empty = processing.strategy === "empty";
-  container.append(element("p", "small-label", "SOURCE COVERAGE"),
-    element("h3", "processing-title", empty ? "No source text to assess" : (hierarchical ? "Whole-document review in stages" : "Full-document review")),
-    element("p", "processing-description", empty ? "The source did not provide usable text; no model assessment was made."
-      : (hierarchical
-        ? "Each source segment was read, then selected exact excerpts were consolidated for the final assessment. Inspect the quotations and limitations below."
-        : "The source text was supplied together for this assessment. The result remains limited to that source and the model’s interpretation.")));
-  const details = [];
-  const pageCount = Array.isArray(processing.source_pages) ? processing.source_pages.length : processing.source_pages;
-  const segments = Array.isArray(processing.segments) ? processing.segments.length : processing.segments;
-  if (Number.isFinite(pageCount)) details.push(`${pageCount} source pages`);
-  if (Number.isFinite(segments)) details.push(`${segments} segments`);
-  if (Number.isFinite(processing.model_calls)) details.push(`${processing.model_calls} model calls`);
-  if (Number.isFinite(processing.context_limit_tokens)) details.push(`${processing.context_limit_tokens.toLocaleString()}-token context window`);
-  if (details.length) container.append(element("p", "processing-detail", details.join(" · ")));
-  if (typeof processing.coverage === "string" && processing.coverage) container.append(element("p", "processing-description", processing.coverage));
-}
-
-function renderMetrics(result) {
-  const container = ui["result-metrics"];
-  container.replaceChildren();
-  container.hidden = false;
-  if (result.mode === "demo") {
-    container.append(element("p", "demo-metrics-note", "Fixed example walkthrough · token use and model inference time are not measured."));
-    return;
-  }
-  const metrics = result.metrics || {};
-  const count = (value) => typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : "Not reported";
-  const values = [
-    ["Input tokens", count(metrics.input_tokens)],
-    ["Output tokens", count(metrics.output_tokens)],
-    ["Context tokens", count(metrics.context_tokens)],
-    ["Inference", typeof metrics.inference_seconds === "number" ? `${metrics.inference_seconds.toFixed(2)} s` : "Not reported"],
-  ];
-  const list = element("dl", "metric-list");
-  for (const [title, value] of values) {
-    const item = element("div", "metric");
-    item.append(element("dt", "", title), element("dd", "", value));
-    list.append(item);
-  }
-  container.append(list);
-  const details = [];
-  if (metrics.token_usage_source) details.push(`Token usage: ${String(metrics.token_usage_source).replaceAll("_", " ")}`);
-  if (typeof metrics.context_characters === "number") details.push(`${metrics.context_characters.toLocaleString()} context characters`);
-  if (details.length) container.append(element("p", "metrics-note", details.join(" · ")));
-  if (result.served_model) container.append(element("p", "metrics-note served-model", `Served model: ${result.served_model}`));
 }
 
 ui["claim-form"].addEventListener("submit", async (event) => {
   event.preventDefault();
   if (busy || importing || !configuration) return;
+  const source = selectedDocument();
   const claim = ui.claim.value.trim();
-  ui["form-error"].hidden = true;
-  if (!claim) {
-    ui["form-error"].textContent = "Enter a claim or choose an example first.";
+  resetResult();
+  if (!source || !ui.vote.value.trim() || !claim || !isReady()) {
+    ui["form-error"].textContent = !isReady() ? "Start local Apertus and refresh its status before checking."
+      : "Select a booklet, name its proposal and enter a claim.";
     ui["form-error"].hidden = false;
-    ui.claim.focus();
     return;
   }
-  if (sourceKind === "library" && (!selectedDocument() || !ui.vote.value.trim())) {
-    ui["form-error"].textContent = "Select a booklet and enter the proposal being checked.";
-    ui["form-error"].hidden = false;
-    ui.vote.focus();
-    return;
-  }
-  const source = sourceKind === "library" ? { document_id: selectedDocument().id, vote: ui.vote.value.trim() } : { proposal_id: ui.proposal.value };
-  const payload = { ...source, model: ui.model.value, claim, claim_language: ui["claim-language"].value, mode: selectedMode() };
+  const payload = { document_id: source.id, vote: ui.vote.value.trim(), model: configuration.model.id,
+    claim, claim_language: ui["claim-language"].value, mode: "live" };
   const controller = new AbortController();
-  const configuredTimeout = configuration.request_timeout_seconds;
-  // Leave the server's provider timeout a margin to return its own error. Older
-  // servers or malformed config use the supported maximum rather than failing early.
-  const timeoutSeconds = typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout)
-    && configuredTimeout >= 11 && configuredTimeout <= 86400 ? configuredTimeout : 610;
-  const timeout = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+  const configured = configuration.request_timeout_seconds;
+  const seconds = Number.isFinite(configured) && configured >= 11 && configured <= 86400 ? configured : 1810;
+  const timeout = setTimeout(() => controller.abort(), seconds * 1000);
   const started = Date.now();
-  ui["check-progress-title"].textContent = selectedMode() === "demo" ? "Opening the walkthrough" : "Reading the source with Apertus";
-  ui["check-progress-detail"].textContent = sourceKind === "library"
-    ? "Long booklets may need several model passes. Evidence and coverage will appear together when complete."
-    : "Comparing the claim against the selected passages…";
   ui["check-elapsed"].textContent = "0s";
-  progressTimer = setInterval(() => {
-    const seconds = Math.floor((Date.now() - started) / 1000);
-    ui["check-elapsed"].textContent = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  const fast = configuration.document_strategy === "retrieval";
+  ui["check-progress-title"].textContent = fast ? "Finding evidence and checking the claim" : "Checking the claim with Apertus";
+  ui["check-progress-description"].textContent = fast
+    ? "Long booklets are checked using selected passages. Keep this page open."
+    : "Long documents may take several minutes. Keep this page open.";
+  const timer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - started) / 1000);
+    ui["check-elapsed"].textContent = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
   }, 1000);
-  setBusy(true);
+  busy = true;
+  ui["claim-form"].setAttribute("aria-busy", "true");
+  ui["check-progress"].hidden = false;
+  ui["check-button-label"].textContent = "Checking…";
+  updateControls();
   try {
-    const response = await fetch("/api/check", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
+    const response = await fetch("/api/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: controller.signal });
     const result = await response.json();
-    if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "The claim could not be checked. Please try again.");
-    if (!Array.isArray(result.checks) || !Array.isArray(result.passages) || typeof result.claim !== "string") {
-      throw new Error("The server returned an incomplete result. Please try again.");
+    if (!response.ok) throw new Error(result.error || "The model could not complete this check.");
+    if (result.mode !== "live" || !result.served_model || !Array.isArray(result.checks)
+        || !Array.isArray(result.passages) || result.claim !== claim || !Object.hasOwn(labels, result.overall)) {
+      throw new Error("The server did not return a valid live model result.");
     }
-    renderResult(result);
+    renderResult(result, source);
   } catch (error) {
     ui["form-error"].textContent = error.name === "AbortError"
-      ? "The check timed out. The provider may still be processing it; try again when it is available."
-      : (error instanceof TypeError ? "Could not reach the local server. Check that it is running, then try again." : error.message);
+      ? "The check timed out. Apertus may still be processing it; wait before retrying."
+      : error instanceof TypeError ? "Could not reach the app server. Start it and try again." : error.message;
     ui["form-error"].hidden = false;
   } finally {
     clearTimeout(timeout);
-    clearInterval(progressTimer);
-    progressTimer = null;
-    setBusy(false);
+    clearInterval(timer);
+    busy = false;
+    ui["claim-form"].setAttribute("aria-busy", "false");
+    ui["check-progress"].hidden = true;
+    ui["check-button-label"].textContent = "Check claim";
+    updateControls();
   }
 });
 
 ui["import-form"].addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (importing || busy || !configuration) return;
+  if (busy || importing || !configuration) return;
   ui["import-error"].hidden = true;
   const metadata = { language: ui["booklet-language"].value };
   if (ui["booklet-title"].value.trim()) metadata.title = ui["booklet-title"].value.trim();
@@ -585,17 +479,16 @@ ui["import-form"].addEventListener("submit", async (event) => {
   try {
     if (importMethod === "url") {
       let url;
-      try { url = new URL(ui["booklet-url"].value.trim()); } catch { throw new Error("Enter a valid HTTPS link to the official voting booklet PDF."); }
+      try { url = new URL(ui["booklet-url"].value.trim()); } catch { throw new Error("Enter a direct HTTPS link to an official booklet PDF."); }
       if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")
-          || !["bk.admin.ch", "www.bk.admin.ch"].includes(url.hostname)) {
-        throw new Error("Official link import accepts HTTPS URLs on bk.admin.ch or www.bk.admin.ch without a custom port. Use Upload PDF for a saved document.");
-      }
+          || !["bk.admin.ch", "www.bk.admin.ch"].includes(url.hostname)) throw new Error("Use a PDF link from bk.admin.ch or www.bk.admin.ch, or upload a saved PDF.");
       url.hash = "";
       endpoint = "/api/booklets/import";
       options = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...metadata, url: url.href }) };
     } else {
       const file = ui["booklet-file"].files?.[0];
-      if (!file || !file.size) throw new Error("Choose a nonempty PDF file to upload.");
+      if (!file || !file.size) throw new Error("Choose a nonempty PDF file.");
+      if (file.size > 25000000) throw new Error("The PDF must be 25 MB or smaller.");
       if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") throw new Error("Choose a PDF file.");
       endpoint = `/api/booklets/upload?${new URLSearchParams(metadata)}`;
       options = { method: "POST", headers: { "Content-Type": "application/pdf" }, body: file };
@@ -606,44 +499,45 @@ ui["import-form"].addEventListener("submit", async (event) => {
     return;
   }
   importing = true;
-  updateControls();
   ui["import-form"].setAttribute("aria-busy", "true");
   ui["import-button"].textContent = "Adding booklet…";
-  ui["import-status"].textContent = importMethod === "url" ? "Downloading the official PDF and extracting its pages…" : "Uploading the PDF and extracting its pages…";
+  ui["import-status"].textContent = "Saving the PDF and extracting its pages. Scans can take a few minutes.";
+  updateControls();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 310000);
   try {
     const response = await fetch(endpoint, { ...options, signal: controller.signal });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "The booklet could not be imported.");
-    if (!data.document?.id) throw new Error("The import returned incomplete booklet metadata. Refresh the library to check its status.");
+    if (!data.document?.id) throw new Error("The import returned incomplete data. Refresh the library before retrying.");
     documents = [...documents.filter((booklet) => booklet.id !== data.document.id), data.document];
-    renderLibrary(data.document.id);
-    setSourceKind("library");
-    await refreshLibrary(data.document.id);
-    ui["import-status"].textContent = "Booklet added. Name the proposal, enter a claim, and examine its evidence.";
+    selectedId = data.document.id;
+    ui["booklet-search"].value = "";
+    ui["source-language"].value = "all";
+    renderLibrary();
+    updateDocument();
+    ui["import-status"].textContent = "Saved to your local library.";
     ui["import-panel"].open = false;
-    ui["input-title"].focus?.({ preventScroll: true });
-    document.getElementById("input-title").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
+    ui["input-title"].focus({ preventScroll: true });
+    ui["input-title"].scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
   } catch (error) {
     ui["import-error"].textContent = error.name === "AbortError"
-      ? "Import timed out. The server may still be extracting pages; refresh the library before retrying."
-      : (error instanceof TypeError ? "Could not reach the local server. Check its connection and try again." : error.message);
+      ? "Import timed out. Extraction may still be running; refresh the library before retrying."
+      : error instanceof TypeError ? "Could not reach the local app server." : error.message;
     ui["import-error"].hidden = false;
-    ui["import-status"].textContent = "No model was called during this import.";
+    ui["import-status"].textContent = "The model was not called during import.";
   } finally {
     clearTimeout(timeout);
     importing = false;
     ui["import-form"].setAttribute("aria-busy", "false");
-    ui["import-button"].textContent = "Add to library ↗";
+    ui["import-button"].textContent = "Add to library";
     updateControls();
   }
 });
 
 ui["download-button"].addEventListener("click", () => {
   if (!currentResult) return;
-  const blob = new Blob([JSON.stringify(currentResult, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(new Blob([JSON.stringify(currentResult, null, 2)], { type: "application/json" }));
   const link = element("a");
   link.href = url;
   link.download = "claimlens-review.json";
@@ -652,45 +546,38 @@ ui["download-button"].addEventListener("click", () => {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
-
-ui.claim.addEventListener("input", updateCharacterCount);
-ui.proposal.addEventListener("change", updateProposal);
-ui["document-select"].addEventListener("change", updateDocument);
-ui["library-source"].addEventListener("click", () => setSourceKind("library"));
-ui["demo-source"].addEventListener("click", () => setSourceKind("demo"));
-ui["refresh-library"].addEventListener("click", () => refreshLibrary());
+ui.claim.addEventListener("input", updateClaim);
+ui.vote.addEventListener("input", () => { resetResult(); updateControls(); });
+ui["claim-language"].addEventListener("change", resetResult);
+ui["booklet-search"].addEventListener("input", renderLibrary);
+ui["source-language"].addEventListener("change", renderLibrary);
+ui["refresh-library"].addEventListener("click", refreshLibrary);
 ui["refresh-runtime"].addEventListener("click", refreshRuntime);
 ui["url-method"].addEventListener("click", () => setImportMethod("url"));
 ui["upload-method"].addEventListener("click", () => setImportMethod("upload"));
-document.querySelectorAll('input[name="mode"]').forEach((input) => input.addEventListener("change", updateMode));
 
 async function initialize() {
+  updateControls();
   try {
     const response = await fetch("/api/config");
-    if (!response.ok) throw new Error("Could not load the prototype configuration.");
     const config = await response.json();
-    if (!config.models?.length) throw new Error("No models are configured. Check the local setup.");
-    if (!Array.isArray(config.proposals)) config.proposals = [];
+    if (!response.ok || !config.model?.id || !Array.isArray(config.documents)) throw new Error("Could not load the application configuration.");
     configuration = config;
-    documents = Array.isArray(config.documents) ? config.documents : [];
-    ui.model.replaceChildren(...config.models.map((model) => new Option(model.label, model.id)));
-    if (config.default_model) ui.model.value = config.default_model;
-    ui.proposal.replaceChildren(...config.proposals.map((proposal) => new Option(proposal.title, proposal.id)));
-    ui["live-mode-status"].textContent = config.live_ready
-      ? (config.local_model_configured ? "Local model configured" : "Provider configured")
-      : "Set up .env to enable";
+    documents = config.documents;
+    ui["model-name"].textContent = config.model.label;
     renderLibrary();
-    setSourceKind(documents.length || !config.proposals.length ? "library" : "demo");
+    updateDocument();
     setImportMethod("url");
-    setBusy(false);
-    refreshRuntime();
+    await refreshRuntime();
   } catch (error) {
     configuration = null;
-    ui["connection-error"].textContent = `${error instanceof TypeError ? "Could not reach the local application." : error.message} Start the server and reload this page.`;
+    ui["connection-error"].textContent = `${error instanceof TypeError ? "Could not reach the local app server." : error.message} Start it with make dev and reload this page.`;
     ui["connection-error"].hidden = false;
-    ui["live-mode-status"].textContent = "Server unavailable";
-    setBusy(false);
+    ui["runtime-title"].textContent = "App unavailable";
+    ui["runtime-message"].textContent = "Start the app server to load the library and check model status.";
+    ui["runtime-indicator"].dataset.state = "unavailable";
+    ui["library-count"].textContent = "Library unavailable";
+    updateControls();
   }
 }
-
 initialize();
